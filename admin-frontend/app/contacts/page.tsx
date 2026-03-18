@@ -13,6 +13,8 @@ export default function ContactsPage() {
   const [page, setPage] = useState(1);
   const [search, setSearch] = useState("");
   const [tagFilter, setTagFilter] = useState("all");
+  const [sortBy, setSortBy] = useState("created_at");
+  const [sortOrder, setSortOrder] = useState<"asc" | "desc">("desc");
   const perPage = 20;
 
   const [detailOpen, setDetailOpen] = useState(false);
@@ -27,6 +29,8 @@ export default function ContactsPage() {
       });
       if (search) params.set("search", search);
       if (tagFilter && tagFilter !== "all") params.set("tag", tagFilter);
+      params.set("sort_by", sortBy);
+      params.set("sort_order", sortOrder);
 
       const res = await fetch(`/api/contacts?${params}`);
       if (!res.ok) throw new Error();
@@ -39,7 +43,7 @@ export default function ContactsPage() {
     } finally {
       setLoading(false);
     }
-  }, [page, search, tagFilter]);
+  }, [page, search, tagFilter, sortBy, sortOrder]);
 
   useEffect(() => {
     fetchContacts();
@@ -52,6 +56,16 @@ export default function ContactsPage() {
 
   function handleTagChange(value: string) {
     setTagFilter(value);
+    setPage(1);
+  }
+
+  function handleSort(column: string) {
+    if (sortBy === column) {
+      setSortOrder(sortOrder === "asc" ? "desc" : "asc");
+    } else {
+      setSortBy(column);
+      setSortOrder("asc");
+    }
     setPage(1);
   }
 
@@ -85,7 +99,13 @@ export default function ContactsPage() {
         </div>
       ) : (
         <>
-          <ContactList contacts={contacts} onSelect={handleSelectContact} />
+          <ContactList
+            contacts={contacts}
+            onSelect={handleSelectContact}
+            sortBy={sortBy}
+            sortOrder={sortOrder}
+            onSort={handleSort}
+          />
           <ContactPagination
             page={page}
             totalPages={totalPages}

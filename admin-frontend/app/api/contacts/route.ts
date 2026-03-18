@@ -7,6 +7,12 @@ export async function GET(request: NextRequest) {
   const perPage = parseInt(searchParams.get("per_page") || "20");
   const search = searchParams.get("search") || "";
   const tagFilter = searchParams.get("tag") || "";
+  const sortBy = searchParams.get("sort_by") || "created_at";
+  const sortOrder = searchParams.get("sort_order") || "desc";
+
+  const allowedSortFields = ["name", "whatsapp", "utm_source", "created_at"];
+  const safeSortBy = allowedSortFields.includes(sortBy) ? sortBy : "created_at";
+  const ascending = sortOrder === "asc";
 
   const offset = (page - 1) * perPage;
 
@@ -43,7 +49,7 @@ export async function GET(request: NextRequest) {
   let leadsQuery = supabaseAdmin
     .from("leads")
     .select("id, name, whatsapp, country_code, instagram, utm_source, created_at")
-    .order("created_at", { ascending: false })
+    .order(safeSortBy, { ascending })
     .range(offset, offset + perPage - 1);
 
   if (search) {

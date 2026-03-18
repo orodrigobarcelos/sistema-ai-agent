@@ -3,6 +3,7 @@
 import { ContactListItem } from "@/lib/types";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
+import { ArrowUpDown, ArrowUp, ArrowDown } from "lucide-react";
 import {
   Table,
   TableBody,
@@ -15,6 +16,16 @@ import {
 interface ContactListProps {
   contacts: ContactListItem[];
   onSelect: (contact: ContactListItem) => void;
+  sortBy: string;
+  sortOrder: "asc" | "desc";
+  onSort: (column: string) => void;
+}
+
+function SortIcon({ column, sortBy, sortOrder }: { column: string; sortBy: string; sortOrder: "asc" | "desc" }) {
+  if (sortBy !== column) return <ArrowUpDown className="h-3.5 w-3.5 ml-1 text-muted-foreground/50" />;
+  return sortOrder === "asc"
+    ? <ArrowUp className="h-3.5 w-3.5 ml-1" />
+    : <ArrowDown className="h-3.5 w-3.5 ml-1" />;
 }
 
 function formatPhone(whatsapp: string) {
@@ -48,7 +59,7 @@ function utmLabel(utm: string | null) {
   return labels[utm] || utm;
 }
 
-export function ContactList({ contacts, onSelect }: ContactListProps) {
+export function ContactList({ contacts, onSelect, sortBy, sortOrder, onSort }: ContactListProps) {
   if (contacts.length === 0) {
     return (
       <div className="flex flex-col items-center justify-center py-16 text-center">
@@ -79,15 +90,31 @@ export function ContactList({ contacts, onSelect }: ContactListProps) {
 
   return (
     <div className="rounded-md border">
-      <Table>
+      <Table className="table-fixed">
         <TableHeader>
           <TableRow>
-            <TableHead className="w-12"></TableHead>
-            <TableHead>Nome</TableHead>
-            <TableHead>Telefone</TableHead>
-            <TableHead>Tags</TableHead>
-            <TableHead>Origem</TableHead>
-            <TableHead>Inscrito em</TableHead>
+            <TableHead className="w-[6%]"></TableHead>
+            <TableHead className="w-[26%]">
+              <button className="flex items-center hover:text-foreground transition-colors cursor-pointer" onClick={() => onSort("name")}>
+                Nome <SortIcon column="name" sortBy={sortBy} sortOrder={sortOrder} />
+              </button>
+            </TableHead>
+            <TableHead className="w-[18%]">
+              <button className="flex items-center hover:text-foreground transition-colors cursor-pointer" onClick={() => onSort("whatsapp")}>
+                Telefone <SortIcon column="whatsapp" sortBy={sortBy} sortOrder={sortOrder} />
+              </button>
+            </TableHead>
+            <TableHead className="w-[18%]">Tags</TableHead>
+            <TableHead className="w-[16%]">
+              <button className="flex items-center hover:text-foreground transition-colors cursor-pointer" onClick={() => onSort("utm_source")}>
+                Origem <SortIcon column="utm_source" sortBy={sortBy} sortOrder={sortOrder} />
+              </button>
+            </TableHead>
+            <TableHead className="w-[16%]">
+              <button className="flex items-center hover:text-foreground transition-colors cursor-pointer" onClick={() => onSort("created_at")}>
+                Inscrito em <SortIcon column="created_at" sortBy={sortBy} sortOrder={sortOrder} />
+              </button>
+            </TableHead>
           </TableRow>
         </TableHeader>
         <TableBody>

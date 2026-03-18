@@ -9,6 +9,8 @@ const navItems = [
   { href: "/tags", label: "Tags", icon: TagIcon },
   { href: "/custom-fields", label: "Campos Personalizados", icon: FieldIcon },
   { href: "/boards", label: "Kanban", icon: KanbanIcon },
+  { href: "/chat", label: "Chat", icon: ChatIcon },
+  { href: "/settings", label: "Configurações", icon: SettingsIcon },
 ];
 
 export function Sidebar() {
@@ -99,6 +101,24 @@ function KanbanIcon({ className }: { className?: string }) {
   );
 }
 
+function SettingsIcon({ className }: { className?: string }) {
+  return (
+    <svg
+      xmlns="http://www.w3.org/2000/svg"
+      viewBox="0 0 24 24"
+      fill="none"
+      stroke="currentColor"
+      strokeWidth="2"
+      strokeLinecap="round"
+      strokeLinejoin="round"
+      className={className}
+    >
+      <path d="M12.22 2h-.44a2 2 0 0 0-2 2v.18a2 2 0 0 1-1 1.73l-.43.25a2 2 0 0 1-2 0l-.15-.08a2 2 0 0 0-2.73.73l-.22.38a2 2 0 0 0 .73 2.73l.15.1a2 2 0 0 1 1 1.72v.51a2 2 0 0 1-1 1.74l-.15.09a2 2 0 0 0-.73 2.73l.22.38a2 2 0 0 0 2.73.73l.15-.08a2 2 0 0 1 2 0l.43.25a2 2 0 0 1 1 1.73V20a2 2 0 0 0 2 2h.44a2 2 0 0 0 2-2v-.18a2 2 0 0 1 1-1.73l.43-.25a2 2 0 0 1 2 0l.15.08a2 2 0 0 0 2.73-.73l.22-.39a2 2 0 0 0-.73-2.73l-.15-.08a2 2 0 0 1-1-1.74v-.5a2 2 0 0 1 1-1.74l.15-.09a2 2 0 0 0 .73-2.73l-.22-.38a2 2 0 0 0-2.73-.73l-.15.08a2 2 0 0 1-2 0l-.43-.25a2 2 0 0 1-1-1.73V4a2 2 0 0 0-2-2z" />
+      <circle cx="12" cy="12" r="3" />
+    </svg>
+  );
+}
+
 function FieldIcon({ className }: { className?: string }) {
   return (
     <svg
@@ -114,6 +134,23 @@ function FieldIcon({ className }: { className?: string }) {
       <rect width="18" height="18" x="3" y="3" rx="2" />
       <path d="M3 9h18" />
       <path d="M9 21V9" />
+    </svg>
+  );
+}
+
+function ChatIcon({ className }: { className?: string }) {
+  return (
+    <svg
+      xmlns="http://www.w3.org/2000/svg"
+      viewBox="0 0 24 24"
+      fill="none"
+      stroke="currentColor"
+      strokeWidth="2"
+      strokeLinecap="round"
+      strokeLinejoin="round"
+      className={className}
+    >
+      <path d="M7.9 20A9 9 0 1 0 4 16.1L2 22z" />
     </svg>
   );
 }

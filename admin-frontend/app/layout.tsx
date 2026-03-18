@@ -30,9 +30,9 @@ export default function RootLayout({
       <body
         className={`${geistSans.variable} ${geistMono.variable} antialiased`}
       >
-        <div className="flex min-h-screen">
+        <div className="flex min-h-screen overflow-hidden">
           <Sidebar />
-          <main className="flex-1 p-8">
+          <main className="flex-1 p-8 overflow-hidden">
             <Suspense fallback={
               <div className="flex items-center justify-center py-16">
                 <div className="h-8 w-8 animate-spin rounded-full border-4 border-muted border-t-primary" />

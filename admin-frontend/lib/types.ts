@@ -89,3 +89,41 @@ export interface ContactDetail extends ContactListItem {
   last_interaction: string | null;
   conversation_summary: string | null;
 }
+
+export interface ChatConversation {
+  session_id: string;
+  lead_name: string | null;
+  lead_phone: string;
+  profile_pic_url: string | null;
+  last_message: string;
+  last_message_at: string;
+}
+
+export interface ChatMessage {
+  id: number;
+  session_id: string;
+  type: "human" | "ai";
+  content: string;
+  created_at: string;
+}
+
+export interface ChatLeadInfo {
+  name: string | null;
+  phone: string;
+  profile_pic_url: string | null;
+  ig_username: string | null;
+  tags: Array<{ id: string; name: string; color: string | null }>;
+  utm_source: string | null;
+  created_at: string | null;
+  kanban_position: { board_name: string; column_name: string } | null;
+}
+
+export interface ChatMedia {
+  id: string;
+  session_id: string;
+  message_id: number | null;
+  media_type: "image" | "audio" | "video" | "document" | "sticker";
+  storage_path: string;
+  mime_type: string | null;
+  created_at: string;
+}
