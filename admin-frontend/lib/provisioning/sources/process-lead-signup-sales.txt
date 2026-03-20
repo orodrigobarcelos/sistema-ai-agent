@@ -1,0 +1,113 @@
+import { serve } from "https://deno.land/std@0.224.0/http/server.ts";
+import { createClient } from "https://esm.sh/@supabase/supabase-js@2";
+
+const SUPABASE_URL = Deno.env.get("SUPABASE_URL") ?? "";
+const SUPABASE_SERVICE_ROLE_KEY = Deno.env.get("SUPABASE_SERVICE_ROLE_KEY") ?? "";
+const OPENAI_API_KEY = Deno.env.get("OPENAI_API_KEY") ?? "";
+const N8N_WEBHOOK_URL = Deno.env.get("N8N_WEBHOOK_URL") ?? "";
+
+const corsHeaders = {
+  "Access-Control-Allow-Origin": "*",
+  "Access-Control-Allow-Headers": "authorization, x-client-info, apikey, content-type",
+  "Access-Control-Allow-Methods": "GET, POST, OPTIONS",
+};
+
+function formatPhoneForWhatsApp(phone: string, countryCode?: string): string {
+  let formatted = phone.replace(/\D/g, "");
+  if (formatted.startsWith("55") && formatted.length >= 12) return formatted;
+  if (countryCode) { const code = countryCode.replace(/\D/g, ""); return code + formatted; }
+  return "55" + formatted;
+}
+
+async function generatePersonalizedMessage(lead: any, profile: any): Promise<string> {
+  console.log(`Gerando mensagem personalizada para ${lead.name}`);
+  if (!OPENAI_API_KEY) { console.error("Chave da API OpenAI nao configurada"); return "Ola! Obrigado pelo seu interesse. Como posso ajudar?"; }
+
+  try {
+    const messageContext = {
+      lead: { name: lead.name, instagram: lead.instagram || profile.username },
+      instagram_profile: {
+        username: profile.username, fullName: profile.full_name, biography: profile.biography,
+        followersCount: profile.followers_count, followingCount: profile.following_count,
+        postsCount: profile.posts_count, isPrivate: false, isVerified: profile.is_verified,
+      }
+    };
+
+    const systemPrompt = `Voce e um especialista em copywriting. Sua tarefa e criar uma mensagem personalizada para apresentar uma proposta exclusiva ao lead.\n\nDados do perfil Instagram:\n${JSON.stringify(messageContext.instagram_profile, null, 2)}\n\nIMPORTANTE: A mensagem DEVE comecar com "Opa, [nome], joia?" seguida de linha em branco.\n\nFORMATO: Sua resposta DEVE COMECAR EXATAMENTE com: "Opa, [nome], joia?\n\nVi que vc teve interesse..."\n\nDepois dessa introducao obrigatoria, continue com uma observacao sobre o Instagram do lead e uma conexao com a proposta exclusiva que temos para ele.\n\nA mensagem deve ter no maximo 450 caracteres.\nNUNCA mencione aula, curso ou conteudo educacional. Fale de proposta exclusiva, solucao personalizada ou oportunidade unica.`;
+
+    const firstName = (lead.name || "").split(" ")[0];
+    const prompt = `Crie uma mensagem personalizada para o lead ${firstName} baseado no perfil do Instagram fornecido. Siga EXATAMENTE o formato especificado.`;
+
+    const response = await fetch("https://api.openai.com/v1/chat/completions", {
+      method: "POST",
+      headers: { "Content-Type": "application/json", "Authorization": `Bearer ${OPENAI_API_KEY}` },
+      body: JSON.stringify({ model: "gpt-4o-mini", messages: [{ role: "system", content: systemPrompt }, { role: "user", content: prompt }], temperature: 0.7, max_tokens: 500 }),
+    });
+
+    if (!response.ok) {
+      const errorText = await response.text();
+      console.error(`Erro ao gerar mensagem com OpenAI: ${response.status} ${errorText}`);
+      return `Opa! Vi que voce tem interesse na nossa proposta... me conta um pouco mais sobre o que voce precisa?`;
+    }
+
+    const data = await response.json();
+    const generatedMessage = data.choices[0].message.content.trim();
+    console.log(`Mensagem personalizada gerada com sucesso`);
+    return generatedMessage;
+  } catch (error) {
+    console.error(`Erro ao gerar mensagem personalizada: ${error}`);
+    return `Opa! Vi que voce tem interesse na nossa proposta... me conta um pouco mais sobre o que voce precisa?`;
+  }
+}
+
+async function sendToN8N(payload: any): Promise<boolean> {
+  try {
+    console.log(`Enviando para N8N: ${JSON.stringify(payload).substring(0, 200)}...`);
+    const response = await fetch(N8N_WEBHOOK_URL, { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify(payload) });
+    if (!response.ok) { const errorText = await response.text(); console.error(`N8N error: ${response.status} - ${errorText}`); return false; }
+    console.log("Message sent to N8N successfully");
+    return true;
+  } catch (error) { console.error("N8N webhook error:", error); return false; }
+}
+
+serve(async (req) => {
+  if (req.method === "OPTIONS") return new Response(null, { status: 200, headers: corsHeaders });
+  if (req.method !== "POST") return new Response(JSON.stringify({ error: "Method not allowed" }), { status: 405, headers: { "Content-Type": "application/json", ...corsHeaders } });
+
+  try {
+    const { lead_id } = await req.json();
+    if (!lead_id) return new Response(JSON.stringify({ error: "lead_id is required" }), { status: 400, headers: { "Content-Type": "application/json", ...corsHeaders } });
+
+    console.log(`[process-lead-signup-sales] Processing lead: ${lead_id}`);
+    const supabase = createClient(SUPABASE_URL, SUPABASE_SERVICE_ROLE_KEY, { auth: { persistSession: false, autoRefreshToken: false } });
+
+    const { data: lead, error: leadError } = await supabase.from("leads").select("*").eq("id", lead_id).maybeSingle();
+    if (leadError || !lead) { console.error(`Lead not found: ${lead_id}`); return new Response(JSON.stringify({ error: "Lead not found" }), { status: 404, headers: { "Content-Type": "application/json", ...corsHeaders } }); }
+
+    const { data: instagram, error: igError } = await supabase.from("instagram").select("*").eq("lead_id", lead_id).maybeSingle();
+    if (igError || !instagram) { console.error(`Instagram not found for lead: ${lead_id}`); return new Response(JSON.stringify({ error: "Instagram profile not found" }), { status: 404, headers: { "Content-Type": "application/json", ...corsHeaders } }); }
+
+    console.log(`[process-lead-signup-sales] Found lead: ${lead.name}, Instagram: @${instagram.username}`);
+    const message = await generatePersonalizedMessage(lead, instagram);
+    console.log(`[process-lead-signup-sales] Generated message: ${message.substring(0, 100)}...`);
+
+    const formattedPhone = formatPhoneForWhatsApp(lead.whatsapp, lead.country_code);
+    const nameParts = (lead.name || "").split(" ");
+    const firstName = nameParts[0] || "";
+    const lastName = nameParts.slice(1).join(" ") || "";
+
+    const webhookPayload = {
+      phone: formattedPhone, message, name: lead.name || "", firstname: firstName, lastname: lastName,
+      instagram: instagram.username || "", instagram_profile_picture: instagram.profile_pic_url || "",
+      biography: instagram.biography || "", lead_id: lead.id,
+      utm_source: lead.utm_source || "", utm_medium: lead.utm_medium || "",
+      utm_campaign: lead.utm_campaign || "", utm_content: lead.utm_content || "", utm_term: lead.utm_term || "",
+    };
+
+    const sent = await sendToN8N(webhookPayload);
+    return new Response(JSON.stringify({ success: sent, message: sent ? "Message sent to N8N" : "Failed to send message", lead_id }), { status: sent ? 200 : 500, headers: { "Content-Type": "application/json", ...corsHeaders } });
+  } catch (error) {
+    console.error("[process-lead-signup-sales] Error:", error);
+    return new Response(JSON.stringify({ error: "Internal server error" }), { status: 500, headers: { "Content-Type": "application/json", ...corsHeaders } });
+  }
+});

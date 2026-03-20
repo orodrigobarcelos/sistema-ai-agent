@@ -1,13 +1,14 @@
 import { NextResponse } from "next/server";
-import { supabaseAdmin } from "@/lib/supabase-admin";
+import { getStudentSupabase } from "@/lib/supabase-student";
 
 export async function GET(
   _request: Request,
   { params }: { params: Promise<{ id: string }> }
 ) {
+  const supabase = await getStudentSupabase();
   const { id } = await params;
 
-  const { data, error } = await supabaseAdmin
+  const { data, error } = await supabase
     .from("kanban_columns")
     .select("*")
     .eq("board_id", id)
@@ -24,11 +25,11 @@ export async function POST(
   request: Request,
   { params }: { params: Promise<{ id: string }> }
 ) {
+  const supabase = await getStudentSupabase();
   const { id } = await params;
   const body = await request.json();
 
-  // Auto-calculate next position
-  const { data: existing } = await supabaseAdmin
+  const { data: existing } = await supabase
     .from("kanban_columns")
     .select("position")
     .eq("board_id", id)
@@ -37,7 +38,7 @@ export async function POST(
 
   const nextPosition = existing && existing.length > 0 ? existing[0].position + 1 : 0;
 
-  const { data, error } = await supabaseAdmin
+  const { data, error } = await supabase
     .from("kanban_columns")
     .insert({
       board_id: id,
@@ -51,7 +52,7 @@ export async function POST(
   if (error) {
     if (error.code === "23505") {
       return NextResponse.json(
-        { error: "Já existe uma coluna com esse nome neste quadro." },
+        { error: "Ja existe uma coluna com esse nome neste quadro." },
         { status: 409 }
       );
     }
@@ -65,14 +66,14 @@ export async function PUT(
   request: Request,
   { params }: { params: Promise<{ id: string }> }
 ) {
+  const supabase = await getStudentSupabase();
   const { id } = await params;
   const body = await request.json();
 
-  // Batch reorder columns
   const columns = body.columns as Array<{ id: string; position: number }>;
 
   for (const col of columns) {
-    await supabaseAdmin
+    await supabase
       .from("kanban_columns")
       .update({ position: col.position })
       .eq("id", col.id)

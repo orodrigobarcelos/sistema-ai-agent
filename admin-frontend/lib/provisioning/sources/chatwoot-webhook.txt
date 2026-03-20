@@ -1,0 +1,268 @@
+import "jsr:@supabase/functions-js/edge-runtime.d.ts";
+import { createClient } from "jsr:@supabase/supabase-js@2";
+
+const CHATWOOT_API_TOKEN = Deno.env.get("CHATWOOT_API_TOKEN")!;
+const CHATWOOT_URL = Deno.env.get("CHATWOOT_URL")!;
+const CHATWOOT_ACCOUNT_ID = Deno.env.get("CHATWOOT_ACCOUNT_ID")!;
+
+function arrayBufferToBase64(buffer: ArrayBuffer): string {
+  const bytes = new Uint8Array(buffer);
+  let binary = "";
+  for (let i = 0; i < bytes.byteLength; i++) { binary += String.fromCharCode(bytes[i]); }
+  return btoa(binary);
+}
+
+function sleep(ms: number): Promise<void> { return new Promise(resolve => setTimeout(resolve, ms)); }
+
+async function uploadToGeminiFileAPI(buffer: ArrayBuffer, mimeType: string, displayName: string, geminiKey: string): Promise<{ fileUri: string; fileName: string } | { error: string }> {
+  const startRes = await fetch(`https://generativelanguage.googleapis.com/upload/v1beta/files?key=${geminiKey}`, {
+    method: "POST", headers: { "X-Goog-Upload-Protocol": "resumable", "X-Goog-Upload-Command": "start", "X-Goog-Upload-Header-Content-Length": String(buffer.byteLength), "X-Goog-Upload-Header-Content-Type": mimeType, "Content-Type": "application/json" },
+    body: JSON.stringify({ file: { display_name: displayName } }),
+  });
+  const uploadUrl = startRes.headers.get("X-Goog-Upload-URL");
+  if (!uploadUrl) return { error: "no upload URL: " + await startRes.text() };
+  const uploadRes = await fetch(uploadUrl, { method: "PUT", headers: { "X-Goog-Upload-Command": "upload, finalize", "X-Goog-Upload-Offset": "0", "Content-Length": String(buffer.byteLength) }, body: buffer });
+  if (!uploadRes.ok) return { error: "upload failed: " + await uploadRes.text() };
+  const fileInfo = await uploadRes.json();
+  const fileUri = fileInfo.file?.uri; const fileName = fileInfo.file?.name;
+  let fileState = fileInfo.file?.state || "PROCESSING"; let attempts = 0;
+  while (fileState === "PROCESSING" && attempts < 12) { await sleep(10000); attempts++; const statusRes = await fetch(`https://generativelanguage.googleapis.com/v1beta/${fileName}?key=${geminiKey}`); const statusJson = await statusRes.json(); fileState = statusJson.state; }
+  if (fileState !== "ACTIVE") return { error: "file not active: " + fileState };
+  return { fileUri, fileName };
+}
+
+Deno.serve(async (req: Request) => {
+  if (req.method !== "POST") return new Response("Method not allowed", { status: 405 });
+
+  try {
+    const payload = await req.json();
+    const event = payload.event;
+    console.log("[chatwoot-webhook] event:", event);
+    const supabase = createClient(Deno.env.get("SUPABASE_URL")!, Deno.env.get("SUPABASE_SERVICE_ROLE_KEY")!);
+
+    // EVENT: conversation_typing_on
+    if (event === "conversation_typing_on") {
+      if (payload.user?.type !== "user") return new Response(JSON.stringify({ skipped: true, reason: "not agent typing" }), { headers: { "Content-Type": "application/json" } });
+      const conversationId = payload.conversation?.id;
+      if (!conversationId) return new Response(JSON.stringify({ skipped: true, reason: "no conversation id" }), { headers: { "Content-Type": "application/json" } });
+      const convRes = await fetch(`${CHATWOOT_URL}/api/v1/accounts/${CHATWOOT_ACCOUNT_ID}/conversations/${conversationId}`, { headers: { api_access_token: CHATWOOT_API_TOKEN } });
+      const convJson = await convRes.json(); const contact = convJson.meta?.sender;
+      let sessionId = contact?.identifier;
+      if (!sessionId && contact?.phone_number) { sessionId = `${contact.phone_number.replace("+", "")}@s.whatsapp.net`; }
+      if (!sessionId) return new Response(JSON.stringify({ skipped: true, reason: "no session_id for typing" }), { headers: { "Content-Type": "application/json" } });
+      const typingUntil = new Date(Date.now() + 2 * 60 * 1000).toISOString();
+      const { data: existing } = await supabase.from("chat_control").select("id").eq("session_id", sessionId).limit(1);
+      if (existing && existing.length > 0) { await supabase.from("chat_control").update({ typing_until: typingUntil }).eq("session_id", sessionId); }
+      else { await supabase.from("chat_control").insert({ session_id: sessionId, ai_paused: false, typing_until: typingUntil }); }
+      return new Response(JSON.stringify({ success: true, action: "typing_pause" }), { headers: { "Content-Type": "application/json" } });
+    }
+
+    // EVENT: conversation_updated
+    if (event === "conversation_updated") {
+      const labels = payload.labels || []; const shouldPause = labels.includes("pausar_ia");
+      const sender = payload.meta?.sender; let sessionId = sender?.identifier;
+      if (!sessionId && sender?.phone_number) { sessionId = `${sender.phone_number.replace("+", "")}@s.whatsapp.net`; }
+      if (!sessionId && payload.id) {
+        const convRes = await fetch(`${CHATWOOT_URL}/api/v1/accounts/${CHATWOOT_ACCOUNT_ID}/conversations/${payload.id}`, { headers: { api_access_token: CHATWOOT_API_TOKEN } });
+        const convJson = await convRes.json(); const contact = convJson.meta?.sender;
+        sessionId = contact?.identifier;
+        if (!sessionId && contact?.phone_number) { sessionId = `${contact.phone_number.replace("+", "")}@s.whatsapp.net`; }
+      }
+      if (!sessionId) return new Response(JSON.stringify({ skipped: true, reason: "no session_id for label" }), { headers: { "Content-Type": "application/json" } });
+      const { data: existing } = await supabase.from("chat_control").select("id, ai_paused").eq("session_id", sessionId).limit(1);
+      const currentPaused = existing && existing.length > 0 ? existing[0].ai_paused : false;
+      if (currentPaused === shouldPause) return new Response(JSON.stringify({ skipped: true, reason: "state unchanged" }), { headers: { "Content-Type": "application/json" } });
+      if (existing && existing.length > 0) { await supabase.from("chat_control").update({ ai_paused: shouldPause, paused_at: shouldPause ? new Date().toISOString() : null }).eq("session_id", sessionId); }
+      else { await supabase.from("chat_control").insert({ session_id: sessionId, ai_paused: shouldPause, paused_at: shouldPause ? new Date().toISOString() : null }); }
+      return new Response(JSON.stringify({ success: true, action: shouldPause ? "paused" : "resumed" }), { headers: { "Content-Type": "application/json" } });
+    }
+
+    // EVENT: contact_updated — sincronizar kanban via custom attributes (kanban_*)
+    if (event === "contact_updated") {
+      const customAttrs = payload.custom_attributes || payload.contact?.custom_attributes || {};
+
+      // Buscar atributos que comecam com "kanban_" — o sufixo e o nome do board
+      const kanbanEntries = Object.entries(customAttrs).filter(([key]) => key.startsWith("kanban_"));
+      if (kanbanEntries.length === 0) return new Response(JSON.stringify({ skipped: true, reason: "no kanban_ attribute" }), { headers: { "Content-Type": "application/json" } });
+
+      // Resolver lead por session_id (identifier) — mais confiavel que lead_id
+      const identifier = payload.identifier || payload.contact?.identifier;
+      const phone = payload.phone_number || payload.contact?.phone_number;
+      let sessionId = identifier;
+      if (!sessionId && phone) { sessionId = `${phone.replace("+", "")}@s.whatsapp.net`; }
+
+      let leadId: string | null = null;
+
+      if (sessionId) {
+        const { data: leadData } = await supabase.from("leads").select("id").eq("session_id", sessionId).limit(1);
+        if (leadData && leadData.length > 0) leadId = leadData[0].id;
+      }
+
+      if (!leadId && phone) {
+        const digits = phone.replace(/\D/g, "");
+        const last8 = digits.slice(-8);
+        const { data: leadsByPhone } = await supabase.from("leads").select("id, whatsapp").limit(50);
+        if (leadsByPhone) {
+          const match = leadsByPhone.find((l: { whatsapp: string }) => l.whatsapp.replace(/\D/g, "").slice(-8) === last8);
+          if (match) leadId = match.id;
+        }
+      }
+
+      if (!leadId) {
+        console.log("[contact_updated] lead nao encontrado:", { session_id: sessionId, phone });
+        return new Response(JSON.stringify({ skipped: true, reason: "lead not found" }), { headers: { "Content-Type": "application/json" } });
+      }
+
+      // Mover o lead em cada board referenciado pelos atributos kanban_*
+      const results = [];
+      for (const [key, columnName] of kanbanEntries) {
+        if (!columnName || typeof columnName !== "string" || columnName.trim() === "") continue;
+        const boardName = key.replace("kanban_", "").replace(/_/g, " ");
+        console.log("[contact_updated] movendo lead:", { lead_id: leadId, board: boardName, column: columnName });
+        const { error: rpcError } = await supabase.rpc("move_lead_to_board_column", {
+          p_lead_id: leadId,
+          p_board_name: boardName,
+          p_column_name: columnName,
+          p_moved_by: "chatwoot"
+        });
+        if (rpcError) console.log("[contact_updated] erro:", rpcError.message);
+        else console.log("[contact_updated] movido com sucesso:", { board: boardName, column: columnName });
+        results.push({ board: boardName, column: columnName, success: !rpcError });
+      }
+
+      return new Response(JSON.stringify({ success: true, action: "kanban_move", lead_id: leadId, results }), { headers: { "Content-Type": "application/json" } });
+    }
+
+    // EVENT: message_created
+    if (event !== "message_created") return new Response(JSON.stringify({ skipped: true, reason: "unhandled event: " + event }), { headers: { "Content-Type": "application/json" } });
+    const contactId = payload.contact?.id ?? payload.conversation?.meta?.sender?.id;
+    const attachments = payload.attachments || [];
+    const isOutgoing = payload.message_type === "outgoing" || payload.message_type === 1;
+    if (!isOutgoing) return new Response(JSON.stringify({ skipped: true, reason: "not outgoing" }), { headers: { "Content-Type": "application/json" } });
+    if (payload.sender?.type !== "user") return new Response(JSON.stringify({ skipped: true, reason: "not human agent" }), { headers: { "Content-Type": "application/json" } });
+    if (payload.private === true) return new Response(JSON.stringify({ skipped: true, reason: "private message" }), { headers: { "Content-Type": "application/json" } });
+    if (payload.content_type === "activity") return new Response(JSON.stringify({ skipped: true, reason: "activity message" }), { headers: { "Content-Type": "application/json" } });
+    const content = payload.content;
+    if (!content && attachments.length === 0) return new Response(JSON.stringify({ skipped: true, reason: "no content and no attachments" }), { headers: { "Content-Type": "application/json" } });
+    if (!contactId) return new Response(JSON.stringify({ skipped: true, reason: "no contact id" }), { headers: { "Content-Type": "application/json" } });
+
+    const contactRes = await fetch(`${CHATWOOT_URL}/api/v1/accounts/${CHATWOOT_ACCOUNT_ID}/contacts/${contactId}`, { headers: { api_access_token: CHATWOOT_API_TOKEN } });
+    const contactJson = await contactRes.json(); const contact = contactJson.payload ?? contactJson;
+    let sessionId = contact.identifier;
+    if (!sessionId && contact.phone_number) { sessionId = `${contact.phone_number.replace("+", "")}@s.whatsapp.net`; }
+    if (!sessionId) return new Response(JSON.stringify({ skipped: true, reason: "no session_id found" }), { headers: { "Content-Type": "application/json" } });
+
+    // Verificar/criar lead
+    const { data: existingLead } = await supabase.from("leads").select("id").eq("session_id", sessionId).limit(1);
+    if (!existingLead || existingLead.length === 0) {
+      const phoneNumber = contact.phone_number || `+${sessionId.replace("@s.whatsapp.net", "")}`;
+      const leadName = contact.name || phoneNumber;
+      const { error: leadError } = await supabase.from("leads").insert({ name: leadName, whatsapp: phoneNumber, session_id: sessionId });
+      if (leadError) console.log("[lead] erro ao criar:", leadError.message);
+      else console.log("[lead] criado:", { session_id: sessionId, name: leadName });
+    }
+
+    // Mensagem com attachments
+    if (attachments.length > 0) {
+      const results = []; const openaiKey = Deno.env.get("OPENAI_API_KEY"); const geminiKey = Deno.env.get("GEMINI_API_KEY");
+      if (!openaiKey) return new Response(JSON.stringify({ error: "no OPENAI_API_KEY" }), { status: 500, headers: { "Content-Type": "application/json" } });
+
+      for (const attachment of attachments) {
+        if (attachment.file_type === "audio") {
+          try {
+            const audioRes = await fetch(attachment.data_url); if (!audioRes.ok) { results.push({ file_type: "audio", error: "download failed" }); continue; }
+            const audioBlob = await audioRes.blob(); const formData = new FormData();
+            formData.append("file", audioBlob, "audio.mp3"); formData.append("model", "whisper-1"); formData.append("language", "pt");
+            const whisperRes = await fetch("https://api.openai.com/v1/audio/transcriptions", { method: "POST", headers: { "Authorization": `Bearer ${openaiKey}` }, body: formData });
+            if (!whisperRes.ok) { results.push({ file_type: "audio", error: "whisper failed" }); continue; }
+            const { text: transcription } = await whisperRes.json();
+            const { error } = await supabase.from("n8n_chat_histories_whatsapp").insert({ session_id: sessionId, message: { type: "ai", content: transcription, tool_calls: [], additional_kwargs: {}, response_metadata: {}, invalid_tool_calls: [] } });
+            results.push({ file_type: "audio", success: !error });
+          } catch (err) { results.push({ file_type: "audio", error: String(err) }); }
+        } else if (attachment.file_type === "image") {
+          try {
+            const imgRes = await fetch(attachment.data_url); if (!imgRes.ok) { results.push({ file_type: "image", error: "download failed" }); continue; }
+            const imgBuffer = await imgRes.arrayBuffer(); const imgBase64 = arrayBufferToBase64(imgBuffer);
+            const mimeType = imgRes.headers.get("content-type") || "image/jpeg";
+            const visionRes = await fetch("https://api.openai.com/v1/chat/completions", { method: "POST", headers: { "Authorization": `Bearer ${openaiKey}`, "Content-Type": "application/json" },
+              body: JSON.stringify({ model: "gpt-4o", messages: [{ role: "user", content: [{ type: "text", text: "O atendente enviou essa imagem no WhatsApp. Descreva detalhadamente o que voce ve na imagem." }, { type: "image_url", image_url: { url: `data:${mimeType};base64,${imgBase64}` } }] }], max_tokens: 500 }) });
+            if (!visionRes.ok) { results.push({ file_type: "image", error: "vision failed" }); continue; }
+            const description = (await visionRes.json()).choices?.[0]?.message?.content || "";
+            const { error } = await supabase.from("n8n_chat_histories_whatsapp").insert({ session_id: sessionId, message: { type: "ai", content: `[Eu enviei uma imagem]\nDescricao da imagem: ${description}`, tool_calls: [], additional_kwargs: {}, response_metadata: {}, invalid_tool_calls: [] } });
+            results.push({ file_type: "image", success: !error });
+          } catch (err) { results.push({ file_type: "image", error: String(err) }); }
+        } else if (attachment.file_type === "video") {
+          if (!geminiKey) { results.push({ file_type: "video", error: "no GEMINI_API_KEY" }); continue; }
+          try {
+            const videoRes = await fetch(attachment.data_url); if (!videoRes.ok) { results.push({ file_type: "video", error: "download failed" }); continue; }
+            const videoBuffer = await videoRes.arrayBuffer(); const mimeType = videoRes.headers.get("content-type") || "video/mp4";
+            const uploadResult = await uploadToGeminiFileAPI(videoBuffer, mimeType, "video_chatwoot.mp4", geminiKey);
+            if ("error" in uploadResult) { results.push({ file_type: "video", error: uploadResult.error }); continue; }
+            const geminiRes = await fetch(`https://generativelanguage.googleapis.com/v1beta/models/gemini-2.5-flash:generateContent?key=${geminiKey}`, { method: "POST", headers: { "Content-Type": "application/json" },
+              body: JSON.stringify({ contents: [{ parts: [{ text: "O atendente enviou esse video no WhatsApp. Descreva de forma objetiva e breve o que voce ve e ouve no video, em portugues." }, { file_data: { file_uri: uploadResult.fileUri, mime_type: mimeType } }] }] }) });
+            if (!geminiRes.ok) { results.push({ file_type: "video", error: "gemini failed" }); continue; }
+            const description = (await geminiRes.json()).candidates?.[0]?.content?.parts?.[0]?.text || "";
+            const { error } = await supabase.from("n8n_chat_histories_whatsapp").insert({ session_id: sessionId, message: { type: "ai", content: `[Eu enviei um video]\nDescricao do video: ${description}`, tool_calls: [], additional_kwargs: {}, response_metadata: {}, invalid_tool_calls: [] } });
+            results.push({ file_type: "video", success: !error });
+            fetch(`https://generativelanguage.googleapis.com/v1beta/${uploadResult.fileName}?key=${geminiKey}`, { method: "DELETE" }).catch(() => {});
+          } catch (err) { results.push({ file_type: "video", error: String(err) }); }
+        } else if (attachment.file_type === "file") {
+          try {
+            const docRes = await fetch(attachment.data_url); if (!docRes.ok) { results.push({ file_type: "file", error: "download failed" }); continue; }
+            const docBuffer = await docRes.arrayBuffer(); const mimeType = docRes.headers.get("content-type") || "application/pdf";
+            const urlPath = attachment.data_url.split("?")[0]; const fileName = decodeURIComponent(urlPath.split("/").pop() || "documento");
+            let description = "";
+            if (mimeType === "application/pdf") {
+              if (!geminiKey) { results.push({ file_type: "file", error: "no GEMINI_API_KEY" }); continue; }
+              const uploadResult = await uploadToGeminiFileAPI(docBuffer, mimeType, fileName, geminiKey);
+              if ("error" in uploadResult) { results.push({ file_type: "file", error: uploadResult.error }); continue; }
+              const geminiRes = await fetch(`https://generativelanguage.googleapis.com/v1beta/models/gemini-2.5-flash:generateContent?key=${geminiKey}`, { method: "POST", headers: { "Content-Type": "application/json" },
+                body: JSON.stringify({ contents: [{ parts: [{ text: "Analise este documento e extraia as informacoes mais relevantes. Gere um resumo objetivo e breve." }, { file_data: { file_uri: uploadResult.fileUri, mime_type: mimeType } }] }] }) });
+              if (!geminiRes.ok) { results.push({ file_type: "file", error: "gemini failed" }); continue; }
+              description = (await geminiRes.json()).candidates?.[0]?.content?.parts?.[0]?.text || "";
+              fetch(`https://generativelanguage.googleapis.com/v1beta/${uploadResult.fileName}?key=${geminiKey}`, { method: "DELETE" }).catch(() => {});
+            } else {
+              const docBase64 = arrayBufferToBase64(docBuffer);
+              const openaiRes = await fetch("https://api.openai.com/v1/responses", { method: "POST", headers: { "Authorization": `Bearer ${openaiKey}`, "Content-Type": "application/json" },
+                body: JSON.stringify({ model: "gpt-4o", input: [{ role: "user", content: [{ type: "input_file", filename: fileName, file_data: `data:${mimeType};base64,${docBase64}` }, { type: "input_text", text: "Analise este documento e extraia as informacoes mais relevantes. Gere um resumo objetivo e breve." }] }] }) });
+              if (!openaiRes.ok) { results.push({ file_type: "file", error: "openai responses failed" }); continue; }
+              const openaiJson = await openaiRes.json();
+              description = openaiJson.output?.find((o: { type: string }) => o.type === "message")?.content?.[0]?.text || "";
+            }
+            const { error } = await supabase.from("n8n_chat_histories_whatsapp").insert({ session_id: sessionId, message: { type: "ai", content: `[Eu enviei um documento: ${fileName}]\nDescricao do documento: ${description}`, tool_calls: [], additional_kwargs: {}, response_metadata: {}, invalid_tool_calls: [] } });
+            results.push({ file_type: "file", success: !error });
+          } catch (err) { results.push({ file_type: "file", error: String(err) }); }
+        } else { results.push({ file_type: attachment.file_type, skipped: true, reason: "not implemented yet" }); }
+      }
+      if (content) { await supabase.from("n8n_chat_histories_whatsapp").insert({ session_id: sessionId, message: { type: "ai", content, tool_calls: [], additional_kwargs: {}, response_metadata: {}, invalid_tool_calls: [] } }); }
+      return new Response(JSON.stringify({ success: true, action: "media_processed", session_id: sessionId, results }), { headers: { "Content-Type": "application/json" } });
+    }
+
+    // Mensagem de texto
+    if (!content) return new Response(JSON.stringify({ skipped: true, reason: "no text content" }), { headers: { "Content-Type": "application/json" } });
+
+    // Localizacao
+    if (content.startsWith("**Location:**")) {
+      const latMatch = content.match(/\*Latitude:\*\s*([\-\d.]+)/); const lngMatch = content.match(/\*Longitude:\*\s*([\-\d.]+)/);
+      const nameMatch = content.match(/\*Name:\*\s*([^\n\\]+)/); const addressMatch = content.match(/\*Address:\*\s*([^\n\\]+)/);
+      const lat = latMatch?.[1] ?? ""; const lng = lngMatch?.[1] ?? "";
+      const name = nameMatch?.[1]?.trim() ?? ""; const address = addressMatch?.[1]?.trim() ?? "";
+      const locationContent = `[Eu enviei uma localizacao]: ${name}\nEndereco: ${address}\nLatitude: ${lat}\nLongitude: ${lng}\nGoogle Maps: https://maps.google.com/maps?q=${lat},${lng}`;
+      await supabase.from("n8n_chat_histories_whatsapp").insert({ session_id: sessionId, message: { type: "ai", content: locationContent, tool_calls: [], additional_kwargs: {}, response_metadata: {}, invalid_tool_calls: [] } });
+      return new Response(JSON.stringify({ success: true, action: "location_saved", session_id: sessionId }), { headers: { "Content-Type": "application/json" } });
+    }
+
+    // Texto normal com deduplicacao
+    const sixtySecondsAgo = new Date(Date.now() - 60000).toISOString();
+    const escapedContent = content.replace(/\\/g, "\\\\").replace(/%/g, "\\%").replace(/_/g, "\\_");
+    const { data: existingMsg } = await supabase.from("n8n_chat_histories_whatsapp").select("id").eq("session_id", sessionId).filter("message->>type", "eq", "ai").filter("message->>content", "ilike", `%${escapedContent}%`).gte("created_at", sixtySecondsAgo).limit(1);
+    if (existingMsg && existingMsg.length > 0) return new Response(JSON.stringify({ skipped: true, reason: "N8N already saved" }), { headers: { "Content-Type": "application/json" } });
+
+    const { error } = await supabase.from("n8n_chat_histories_whatsapp").insert({ session_id: sessionId, message: { type: "ai", content, tool_calls: [], additional_kwargs: {}, response_metadata: {}, invalid_tool_calls: [] } });
+    if (error) return new Response(JSON.stringify({ error: error.message }), { status: 500, headers: { "Content-Type": "application/json" } });
+    return new Response(JSON.stringify({ success: true, session_id: sessionId, content }), { headers: { "Content-Type": "application/json" } });
+  } catch (err) {
+    console.log("[error] exception:", String(err));
+    return new Response(JSON.stringify({ error: String(err) }), { status: 500, headers: { "Content-Type": "application/json" } });
+  }
+});

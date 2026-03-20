@@ -1,8 +1,6 @@
 import type { Metadata } from "next";
-import { Suspense } from "react";
 import { Geist, Geist_Mono } from "next/font/google";
 import { Toaster } from "@/components/ui/sonner";
-import { Sidebar } from "@/components/layout/sidebar";
 import "./globals.css";
 
 const geistSans = Geist({
@@ -17,7 +15,7 @@ const geistMono = Geist_Mono({
 
 export const metadata: Metadata = {
   title: "Admin - Gerenciamento de Leads",
-  description: "Painel administrativo para gerenciar tags e campos personalizados",
+  description: "Painel administrativo para gerenciar leads e funis",
 };
 
 export default function RootLayout({
@@ -30,18 +28,7 @@ export default function RootLayout({
       <body
         className={`${geistSans.variable} ${geistMono.variable} antialiased`}
       >
-        <div className="flex min-h-screen overflow-hidden">
-          <Sidebar />
-          <main className="flex-1 p-8 overflow-hidden">
-            <Suspense fallback={
-              <div className="flex items-center justify-center py-16">
-                <div className="h-8 w-8 animate-spin rounded-full border-4 border-muted border-t-primary" />
-              </div>
-            }>
-              {children}
-            </Suspense>
-          </main>
-        </div>
+        {children}
         <Toaster richColors />
       </body>
     </html>

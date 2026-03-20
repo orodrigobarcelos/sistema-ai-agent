@@ -1,0 +1,136 @@
+import { serve } from "https://deno.land/std@0.224.0/http/server.ts";
+import { createClient } from "https://esm.sh/@supabase/supabase-js@2";
+
+const supabaseUrl = Deno.env.get("SUPABASE_URL") ?? "";
+const supabaseServiceKey = Deno.env.get("SUPABASE_SERVICE_ROLE_KEY") ?? "";
+
+const corsHeaders = {
+  "Access-Control-Allow-Origin": "*",
+  "Access-Control-Allow-Headers": "authorization, x-client-info, apikey, content-type",
+  "Access-Control-Allow-Methods": "GET, POST, OPTIONS",
+};
+
+serve(async (req) => {
+  if (req.method === "OPTIONS") {
+    return new Response(null, { status: 200, headers: corsHeaders });
+  }
+
+  if (req.method !== "POST") {
+    return new Response(
+      JSON.stringify({ error: "Method not allowed" }),
+      { status: 405, headers: { "Content-Type": "application/json", ...corsHeaders } }
+    );
+  }
+
+  const supabase = createClient(supabaseUrl, supabaseServiceKey, {
+    auth: { persistSession: false, autoRefreshToken: false }
+  });
+
+  try {
+    const body = await req.json();
+    const { action, lead_id, phone, fields } = body;
+
+    console.log(`[n8n-data-collect] Received:`, { action, lead_id, phone });
+
+    if (action === "get_lead_data") {
+      if (!lead_id && !phone) {
+        return new Response(
+          JSON.stringify({ data: null, error: "lead_id ou phone e obrigatorio" }),
+          { status: 400, headers: { "Content-Type": "application/json", ...corsHeaders } }
+        );
+      }
+
+      let lead = null;
+      if (lead_id) {
+        const { data, error } = await supabase
+          .from("leads")
+          .select("*")
+          .eq("id", lead_id)
+          .maybeSingle();
+        if (!error) lead = data;
+      }
+
+      if (!lead && phone) {
+        const { data, error } = await supabase
+          .from("leads")
+          .select("*")
+          .eq("whatsapp", phone)
+          .maybeSingle();
+        if (!error) lead = data;
+      }
+
+      if (!lead) {
+        console.log(`[n8n-data-collect] Lead not found`);
+        return new Response(
+          JSON.stringify({ data: null, error: "Lead nao encontrado" }),
+          { status: 404, headers: { "Content-Type": "application/json", ...corsHeaders } }
+        );
+      }
+
+      let instagramData = null;
+      const { data: igData } = await supabase
+        .from("instagram")
+        .select("*")
+        .eq("lead_id", lead.id)
+        .maybeSingle();
+      if (igData) instagramData = igData;
+
+      const responseData = {
+        id: lead.id,
+        name: lead.name,
+        whatsapp: lead.whatsapp,
+        country_code: lead.country_code,
+        email: lead.email || null,
+        instagram: instagramData?.username || lead.instagram || null,
+        instagram_full: instagramData ? {
+          username: instagramData.username,
+          full_name: instagramData.full_name,
+          biography: instagramData.biography,
+          followers_count: instagramData.followers_count,
+          following_count: instagramData.following_count,
+          posts_count: instagramData.posts_count,
+          is_verified: instagramData.is_verified,
+          profile_pic_url: instagramData.profile_pic_url,
+        } : null,
+        utm_source: lead.utm_source,
+        utm_medium: lead.utm_medium,
+        utm_campaign: lead.utm_campaign,
+        utm_content: lead.utm_content,
+        utm_term: lead.utm_term,
+        created_at: lead.created_at,
+      };
+
+      if (fields && Array.isArray(fields) && fields.length > 0) {
+        const filteredData: Record<string, any> = {};
+        fields.forEach((field: string) => {
+          if (responseData[field as keyof typeof responseData] !== undefined) {
+            filteredData[field] = responseData[field as keyof typeof responseData];
+          }
+        });
+        console.log(`[n8n-data-collect] Returning filtered fields:`, filteredData);
+        return new Response(
+          JSON.stringify({ data: filteredData, error: null }),
+          { status: 200, headers: { "Content-Type": "application/json", ...corsHeaders } }
+        );
+      }
+
+      console.log(`[n8n-data-collect] Returning lead data for ${lead.name}`);
+      return new Response(
+        JSON.stringify({ data: responseData, error: null }),
+        { status: 200, headers: { "Content-Type": "application/json", ...corsHeaders } }
+      );
+    }
+
+    return new Response(
+      JSON.stringify({ data: null, error: "Acao nao reconhecida" }),
+      { status: 400, headers: { "Content-Type": "application/json", ...corsHeaders } }
+    );
+
+  } catch (error) {
+    console.error("[n8n-data-collect] Error:", error);
+    return new Response(
+      JSON.stringify({ data: null, error: "Erro interno do servidor" }),
+      { status: 500, headers: { "Content-Type": "application/json", ...corsHeaders } }
+    );
+  }
+});

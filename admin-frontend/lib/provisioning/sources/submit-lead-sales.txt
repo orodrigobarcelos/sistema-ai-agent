@@ -1,0 +1,94 @@
+import { createClient } from "https://esm.sh/@supabase/supabase-js@2";
+
+const corsHeaders = {
+  "Access-Control-Allow-Origin": "*",
+  "Access-Control-Allow-Headers": "authorization, x-client-info, apikey, content-type",
+};
+
+interface CreateLeadPayload { name: string; whatsapp: string; country_code: string; utm_source?: string | null; utm_campaign?: string | null; utm_medium?: string | null; utm_content?: string | null; utm_term?: string | null; }
+interface InstagramData { username: string; fullName: string | null; profilePicUrl: string | null; biography: string | null; followersCount: number | null; followingCount: number | null; postsCount: number | null; isVerified: boolean | null; }
+interface ConfirmInstagramPayload { lead_id: string; instagram_data: InstagramData; }
+interface UpdateInstagramPayload { lead_id: string; username: string; }
+
+Deno.serve(async (req) => {
+  if (req.method === "OPTIONS") return new Response("ok", { headers: corsHeaders });
+
+  try {
+    const supabase = createClient(Deno.env.get("SUPABASE_URL")!, Deno.env.get("SUPABASE_SERVICE_ROLE_KEY")!);
+    const { action, payload } = await req.json();
+    console.log(`[submit-lead-sales] Action: ${action}`);
+
+    if (action === "create_lead") {
+      const { name, whatsapp, country_code, utm_source, utm_campaign, utm_medium, utm_content, utm_term } = payload as CreateLeadPayload;
+      if (!name?.trim() || !whatsapp?.trim()) return new Response(JSON.stringify({ error: "Nome e WhatsApp sao obrigatorios" }), { status: 400, headers: { ...corsHeaders, "Content-Type": "application/json" } });
+
+      const { data: existingLead } = await supabase.from("leads").select("id, instagram").eq("whatsapp", whatsapp).maybeSingle();
+      if (existingLead) {
+        if (existingLead.instagram) return new Response(JSON.stringify({ success: true, lead_id: existingLead.id, has_instagram: true, redirect_url: `/proposta?lead_id=${existingLead.id}` }), { headers: { ...corsHeaders, "Content-Type": "application/json" } });
+        return new Response(JSON.stringify({ success: true, lead_id: existingLead.id, has_instagram: false }), { headers: { ...corsHeaders, "Content-Type": "application/json" } });
+      }
+
+      const newLeadId = crypto.randomUUID();
+      const { error: insertError } = await supabase.from("leads").insert({ id: newLeadId, name: name.trim(), whatsapp, country_code: country_code || "+55", utm_source, utm_campaign, utm_medium, utm_content, utm_term });
+      if (insertError) { console.error("[submit-lead-sales] Insert error:", insertError); return new Response(JSON.stringify({ error: "Erro ao criar lead" }), { status: 500, headers: { ...corsHeaders, "Content-Type": "application/json" } }); }
+      return new Response(JSON.stringify({ success: true, lead_id: newLeadId, has_instagram: false }), { headers: { ...corsHeaders, "Content-Type": "application/json" } });
+    }
+
+    if (action === "confirm_instagram") {
+      const { lead_id, instagram_data } = payload as ConfirmInstagramPayload;
+      if (!lead_id || !instagram_data?.username) return new Response(JSON.stringify({ error: "lead_id e instagram_data sao obrigatorios" }), { status: 400, headers: { ...corsHeaders, "Content-Type": "application/json" } });
+
+      const { error: upsertError } = await supabase.from("instagram").upsert({
+        lead_id, username: instagram_data.username, full_name: instagram_data.fullName,
+        profile_pic_url: instagram_data.profilePicUrl, followers_count: instagram_data.followersCount,
+        following_count: instagram_data.followingCount, posts_count: instagram_data.postsCount,
+        is_verified: instagram_data.isVerified, biography: instagram_data.biography,
+      }, { onConflict: "lead_id" });
+      if (upsertError) { console.error("[submit-lead-sales] Upsert instagram error:", upsertError); return new Response(JSON.stringify({ error: "Erro ao salvar Instagram" }), { status: 500, headers: { ...corsHeaders, "Content-Type": "application/json" } }); }
+
+      await supabase.from("leads").update({ instagram: instagram_data.username }).eq("id", lead_id);
+
+      const supabaseUrl = Deno.env.get("SUPABASE_URL")!;
+      fetch(`${supabaseUrl}/functions/v1/process-lead-signup-sales`, { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ lead_id }) }).catch((err) => console.error("[submit-lead-sales] process-lead-signup-sales error:", err));
+
+      return new Response(JSON.stringify({ success: true, lead_id, redirect_url: `/proposta?lead_id=${lead_id}` }), { headers: { ...corsHeaders, "Content-Type": "application/json" } });
+    }
+
+    if (action === "update_instagram") {
+      const { lead_id, username } = payload as UpdateInstagramPayload;
+      if (!lead_id || !username?.trim()) return new Response(JSON.stringify({ error: "lead_id e username sao obrigatorios" }), { status: 400, headers: { ...corsHeaders, "Content-Type": "application/json" } });
+
+      const cleanUsername = username.trim().replace(/^@/, "");
+      const supabaseUrl = Deno.env.get("SUPABASE_URL")!;
+      const profileResponse = await fetch(`${supabaseUrl}/functions/v1/instagram-profile?username=${encodeURIComponent(cleanUsername)}`);
+      if (!profileResponse.ok) return new Response(JSON.stringify({ error: "Instagram nao encontrado" }), { status: 404, headers: { ...corsHeaders, "Content-Type": "application/json" } });
+
+      const profileData = await profileResponse.json();
+      if (!profileData || !profileData.username) return new Response(JSON.stringify({ error: "Instagram nao encontrado" }), { status: 404, headers: { ...corsHeaders, "Content-Type": "application/json" } });
+
+      await supabase.from("instagram").update({ username: profileData.username, full_name: profileData.fullName, biography: profileData.biography, followers_count: profileData.followersCount, following_count: profileData.followingCount, posts_count: profileData.postsCount, profile_pic_url: profileData.profilePicUrl, is_verified: profileData.isVerified }).eq("lead_id", lead_id);
+      await supabase.from("personalizations").delete().eq("lead_id", lead_id);
+      await supabase.from("leads").update({ instagram: profileData.username }).eq("id", lead_id);
+
+      return new Response(JSON.stringify({ success: true, lead_id, profile: profileData }), { headers: { ...corsHeaders, "Content-Type": "application/json" } });
+    }
+
+    if (action === "get_lead_data") {
+      const { lead_id } = payload as { lead_id: string };
+      if (!lead_id) return new Response(JSON.stringify({ error: "lead_id e obrigatorio" }), { status: 400, headers: { ...corsHeaders, "Content-Type": "application/json" } });
+
+      const { data: leadData, error: leadError } = await supabase.from("leads").select("name").eq("id", lead_id).maybeSingle();
+      if (leadError) return new Response(JSON.stringify({ error: "Erro ao buscar lead" }), { status: 500, headers: { ...corsHeaders, "Content-Type": "application/json" } });
+      if (!leadData) return new Response(JSON.stringify({ error: "Lead nao encontrado", lead_not_found: true }), { status: 404, headers: { ...corsHeaders, "Content-Type": "application/json" } });
+
+      const { data: instagramData } = await supabase.from("instagram").select("username, profile_pic_url, full_name, followers_count, following_count, posts_count, is_verified").eq("lead_id", lead_id).maybeSingle();
+
+      return new Response(JSON.stringify({ success: true, lead: leadData, instagram: instagramData || null }), { headers: { ...corsHeaders, "Content-Type": "application/json" } });
+    }
+
+    return new Response(JSON.stringify({ error: "Acao invalida" }), { status: 400, headers: { ...corsHeaders, "Content-Type": "application/json" } });
+  } catch (error) {
+    console.error("[submit-lead-sales] Error:", error);
+    return new Response(JSON.stringify({ error: "Erro interno do servidor" }), { status: 500, headers: { ...corsHeaders, "Content-Type": "application/json" } });
+  }
+});

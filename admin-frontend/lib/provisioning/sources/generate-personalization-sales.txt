@@ -1,0 +1,141 @@
+import "https://deno.land/x/xhr@0.1.0/mod.ts";
+import { serve } from "https://deno.land/std@0.168.0/http/server.ts";
+import { createClient } from "https://esm.sh/@supabase/supabase-js@2";
+
+const corsHeaders = { "Access-Control-Allow-Origin": "*", "Access-Control-Allow-Headers": "authorization, x-client-info, apikey, content-type" };
+const OPENAI_API_KEY = Deno.env.get("OPENAI_API_KEY");
+const RAPIDAPI_KEY = Deno.env.get("RAPIDAPI_KEY");
+const SUPABASE_URL = Deno.env.get("SUPABASE_URL")!;
+const SUPABASE_SERVICE_ROLE_KEY = Deno.env.get("SUPABASE_SERVICE_ROLE_KEY")!;
+
+interface Lead { id: string; name: string; whatsapp: string; region?: string; }
+interface InstagramProfile { username: string; full_name: string; biography: string; followers_count: number; }
+interface StoryData { ocrText?: string; place?: string; activity?: string; brand?: string; time?: string; imageUrl?: string; }
+interface StoriesResult { storyData: StoryData | null; userNotFound: boolean; }
+
+async function fetchInstagramStories(username: string): Promise<StoriesResult> {
+  if (!RAPIDAPI_KEY) return { storyData: null, userNotFound: false };
+  try {
+    const sanitizedUsername = username.trim().replace(/^@/, "");
+    const form = new FormData(); form.append('username_or_url', sanitizedUsername);
+    const response = await fetch('https://instagram-scraper-stable-api.p.rapidapi.com/get_ig_user_stories.php', { method: 'POST', headers: { 'X-RapidAPI-Key': RAPIDAPI_KEY, 'X-RapidAPI-Host': 'instagram-scraper-stable-api.p.rapidapi.com' }, body: form });
+    let data: any = null;
+    try { data = await response.json(); } catch (e) { return { storyData: null, userNotFound: false }; }
+    if (data?.error && (data.error.toLowerCase().includes("does not exist") || data.error.toLowerCase().includes("invalid") || data.error.toLowerCase().includes("missing username"))) return { storyData: null, userNotFound: true };
+    if (response.status === 404) return { storyData: null, userNotFound: true };
+    if (!response.ok) return { storyData: null, userNotFound: false };
+    const storiesArray = Array.isArray(data) ? data : (data?.data?.items || []);
+    if (storiesArray.length === 0) return { storyData: null, userNotFound: false };
+    const nowSec = Math.floor(Date.now() / 1000);
+    const activeStories = storiesArray.filter((s: any) => { const exp = Number(s?.expiring_at || 0); const taken = Number(s?.taken_at || 0); if (exp && exp > nowSec) return true; if (taken && nowSec - taken <= 24 * 60 * 60) return true; return false; });
+    if (activeStories.length === 0) return { storyData: null, userNotFound: false };
+    const latestStory = activeStories[0];
+    const imageUrl = latestStory?.image_versions2?.candidates?.[0]?.url || null;
+    const videoUrl = latestStory?.video_versions?.[0]?.url || null;
+    const toProxy = (u: string) => u ? `https://images.weserv.nl/?url=${encodeURIComponent(u.replace(/^https?:\/\//, ''))}` : null;
+    return { storyData: { imageUrl: toProxy(imageUrl || videoUrl) || imageUrl || videoUrl, ocrText: latestStory?.accessibility_caption || "", place: latestStory?.location?.name || "", activity: "", brand: "", time: latestStory?.taken_at ? new Date(Number(latestStory.taken_at) * 1000).toLocaleTimeString() : "" }, userNotFound: false };
+  } catch (error) { console.error("Error fetching stories:", error); return { storyData: null, userNotFound: false }; }
+}
+
+async function analyzeStoryWithVision(storyData: StoryData): Promise<StoryData> {
+  if (!storyData.imageUrl || !OPENAI_API_KEY) return storyData;
+  try {
+    const response = await fetch("https://api.openai.com/v1/chat/completions", { method: "POST", headers: { "Authorization": `Bearer ${OPENAI_API_KEY}`, "Content-Type": "application/json" },
+      body: JSON.stringify({ model: "gpt-4o-mini", messages: [{ role: "system", content: "Voce e um analisador de imagens de Instagram Stories. Analise a imagem e extraia: 1. Texto visivel (OCR) 2. Local/ambiente 3. Atividade 4. Marcas 5. Horario. Responda em JSON com as chaves: ocrText, place, activity, brand, time" }, { role: "user", content: [{ type: "image_url", image_url: { url: storyData.imageUrl } }, { type: "text", text: "Analise esta imagem de story do Instagram." }] }], max_tokens: 300 }) });
+    if (!response.ok) return storyData;
+    const data = await response.json(); const content = data.choices?.[0]?.message?.content;
+    if (content) { try { const parsed = JSON.parse(content.replace(/```json\n?|\n?```/g, "")); return { ...storyData, ocrText: parsed.ocrText || storyData.ocrText, place: parsed.place || storyData.place, activity: parsed.activity || storyData.activity, brand: parsed.brand || storyData.brand, time: parsed.time || storyData.time }; } catch {} }
+  } catch (error) { console.error("Error analyzing story:", error); }
+  return storyData;
+}
+
+function buildStoriesPrompt(lead: Lead, profile: InstagramProfile, storyData: StoryData): string {
+  return `Voce e um especialista em copywriting de alta conversao.\nCrie uma mensagem persuasiva com max 450 caracteres para apresentar uma proposta exclusiva e personalizada.\nComece com "Meu caro," (masculino), "Minha cara," (feminino), ou primeiro nome + "vi no seu stories..."\nUse contraste, urgencia, consequencia e provocacao final.\nO objetivo e despertar interesse em uma proposta exclusiva feita sob medida para o lead.\nNUNCA mencione aula, curso ou conteudo educacional.\n\nNOME DO LEAD: "${lead.name}"\nBIO: "${profile.biography}"\nSTORY: Texto: ${storyData.ocrText || "\u2014"} | Local: ${storyData.place || "\u2014"} | Atividade: ${storyData.activity || "\u2014"}\nPerfil: ${profile.username} | Seguidores: ${profile.followers_count}\n\nEntregue apenas a mensagem final.`;
+}
+
+function buildBioPrompt(lead: Lead, profile: InstagramProfile): string {
+  return `Voce e um especialista em copywriting de alta conversao.\nCrie uma mensagem persuasiva com max 450 caracteres para apresentar uma proposta exclusiva e personalizada.\nComece com "Meu caro," (masculino), "Minha cara," (feminino), ou primeiro nome.\nUse dados concretos, gap, urgencia, consequencia e provocacao.\nO objetivo e despertar interesse em uma proposta exclusiva feita sob medida para o lead.\nNUNCA mencione aula, curso ou conteudo educacional.\n\nBIO: "${profile.biography}"\nNome: ${lead.name} | Username: ${profile.username} | Seguidores: ${profile.followers_count}\n\nEntregue apenas a mensagem final.`;
+}
+
+async function generateMessage(prompt: string): Promise<string> {
+  if (!OPENAI_API_KEY) throw new Error("OPENAI_API_KEY not configured");
+  const response = await fetch("https://api.openai.com/v1/chat/completions", { method: "POST", headers: { "Authorization": `Bearer ${OPENAI_API_KEY}`, "Content-Type": "application/json" },
+    body: JSON.stringify({ model: "gpt-4o-mini", messages: [{ role: "system", content: "Voce e um copywriter especialista. Responda APENAS com a mensagem final. NUNCA mencione aula, curso ou conteudo educacional." }, { role: "user", content: prompt }], max_tokens: 300, temperature: 0.8 }) });
+  if (!response.ok) throw new Error(`OpenAI API error: ${response.status}`);
+  const data = await response.json(); const message = data.choices?.[0]?.message?.content?.trim();
+  if (!message) throw new Error("No message generated");
+  return message;
+}
+
+async function fetchFreshInstagramProfile(username: string): Promise<{ biography: string; full_name: string; followers_count: number; following_count: number; profile_pic_url: string } | null> {
+  try {
+    const sanitizedUsername = username.trim().replace(/^@/, "").toLowerCase();
+    const response = await fetch(`${SUPABASE_URL}/functions/v1/instagram-profile?username=${encodeURIComponent(sanitizedUsername)}`, { headers: { "Content-Type": "application/json" } });
+    if (!response.ok) return null;
+    const data = await response.json();
+    return { biography: data.biography || "", full_name: data.fullName || "", followers_count: data.followersCount || 0, following_count: data.followingCount || 0, profile_pic_url: data.profilePicUrl || "" };
+  } catch (error) { console.error("[fetchFreshInstagramProfile] Error:", error); return null; }
+}
+
+serve(async (req) => {
+  if (req.method === "OPTIONS") return new Response(null, { headers: corsHeaders });
+  try {
+    const url = new URL(req.url); const leadId = url.searchParams.get("lead_id");
+    if (!leadId) return new Response(JSON.stringify({ error: "lead_id is required" }), { status: 400, headers: { ...corsHeaders, "Content-Type": "application/json" } });
+
+    const supabase = createClient(SUPABASE_URL, SUPABASE_SERVICE_ROLE_KEY);
+    const { data: lead, error: leadError } = await supabase.from("leads").select("*").eq("id", leadId).single();
+    if (leadError || !lead) return new Response(JSON.stringify({ error: "Lead not found" }), { status: 404, headers: { ...corsHeaders, "Content-Type": "application/json" } });
+
+    const { data: instagramProfile, error: instagramError } = await supabase.from("instagram").select("*").eq("lead_id", leadId).single();
+    if (instagramError || !instagramProfile) return new Response(JSON.stringify({ error: "Instagram profile not found" }), { status: 404, headers: { ...corsHeaders, "Content-Type": "application/json" } });
+
+    const profile: InstagramProfile = { username: instagramProfile.username, full_name: instagramProfile.full_name || "", biography: instagramProfile.biography || "", followers_count: instagramProfile.followers_count || 0 };
+
+    const { storyData, userNotFound } = await fetchInstagramStories(profile.username);
+    if (userNotFound) return new Response(JSON.stringify({ error: "instagram_not_found", message: "Instagram nao encontrado." }), { status: 404, headers: { ...corsHeaders, "Content-Type": "application/json" } });
+
+    const hasActiveStories = !!(storyData && storyData.imageUrl);
+    let message: string = ""; let source: "stories" | "bio";
+
+    if (hasActiveStories) {
+      const analyzedStory = await analyzeStoryWithVision(storyData);
+      const prompt = buildStoriesPrompt(lead, profile, analyzedStory);
+      message = await generateMessage(prompt); source = "stories";
+      if (!message || message.trim() === "") return new Response(JSON.stringify({ error: "Generated message is empty" }), { status: 500, headers: { ...corsHeaders, "Content-Type": "application/json" } });
+      await supabase.from("personalizations").upsert({ lead_id: leadId, message, source, instagram_username: profile.username, message_generated_at: new Date().toISOString() }, { onConflict: "lead_id,source" });
+      return new Response(JSON.stringify({ message, source, cached: false }), { headers: { ...corsHeaders, "Content-Type": "application/json" } });
+    }
+
+    const { data: existingBioPersonalization } = await supabase.from("personalizations").select("*").eq("lead_id", leadId).eq("source", "bio").single();
+
+    if (!existingBioPersonalization) {
+      const freshProfile = await fetchFreshInstagramProfile(profile.username);
+      if (freshProfile) { await supabase.from("instagram").update({ biography: freshProfile.biography, full_name: freshProfile.full_name, followers_count: freshProfile.followers_count, following_count: freshProfile.following_count, profile_pic_url: freshProfile.profile_pic_url }).eq("lead_id", leadId); profile.biography = freshProfile.biography; profile.full_name = freshProfile.full_name; profile.followers_count = freshProfile.followers_count; }
+      const prompt = buildBioPrompt(lead, profile); message = await generateMessage(prompt); source = "bio";
+      if (!message || message.trim() === "") return new Response(JSON.stringify({ error: "Generated message is empty" }), { status: 500, headers: { ...corsHeaders, "Content-Type": "application/json" } });
+      await supabase.from("personalizations").upsert({ lead_id: leadId, message, source, instagram_username: profile.username, message_generated_at: new Date().toISOString() }, { onConflict: "lead_id,source" });
+      return new Response(JSON.stringify({ message, source, cached: false }), { headers: { ...corsHeaders, "Content-Type": "application/json" } });
+    }
+
+    const messageDate = new Date(existingBioPersonalization.message_generated_at || existingBioPersonalization.created_at);
+    const daysSinceGeneration = (Date.now() - messageDate.getTime()) / (1000 * 60 * 60 * 24);
+    const cachedUsername = existingBioPersonalization.instagram_username;
+    const usernameChanged = cachedUsername && cachedUsername.toLowerCase() !== profile.username.toLowerCase();
+
+    if (!usernameChanged && daysSinceGeneration < 30 && existingBioPersonalization.message && existingBioPersonalization.message.trim() !== "") {
+      return new Response(JSON.stringify({ message: existingBioPersonalization.message, source: existingBioPersonalization.source, cached: true }), { headers: { ...corsHeaders, "Content-Type": "application/json" } });
+    }
+
+    const freshProfile = await fetchFreshInstagramProfile(profile.username);
+    if (freshProfile) { await supabase.from("instagram").update({ biography: freshProfile.biography, full_name: freshProfile.full_name, followers_count: freshProfile.followers_count, following_count: freshProfile.following_count, profile_pic_url: freshProfile.profile_pic_url }).eq("lead_id", leadId); profile.biography = freshProfile.biography; profile.full_name = freshProfile.full_name; profile.followers_count = freshProfile.followers_count; }
+
+    const prompt = buildBioPrompt(lead, profile); message = await generateMessage(prompt); source = "bio";
+    if (!message || message.trim() === "") return new Response(JSON.stringify({ error: "Generated message is empty" }), { status: 500, headers: { ...corsHeaders, "Content-Type": "application/json" } });
+    await supabase.from("personalizations").upsert({ lead_id: leadId, message, source, instagram_username: profile.username, message_generated_at: new Date().toISOString() }, { onConflict: "lead_id,source" });
+    return new Response(JSON.stringify({ message, source, cached: false }), { headers: { ...corsHeaders, "Content-Type": "application/json" } });
+  } catch (error) {
+    console.error("Error in generate-personalization-sales:", error);
+    return new Response(JSON.stringify({ error: error instanceof Error ? error.message : "Internal server error" }), { status: 500, headers: { ...corsHeaders, "Content-Type": "application/json" } });
+  }
+});

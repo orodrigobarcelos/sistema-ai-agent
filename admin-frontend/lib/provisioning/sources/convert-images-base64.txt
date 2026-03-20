@@ -1,0 +1,62 @@
+import "jsr:@supabase/functions-js/edge-runtime.d.ts";
+
+const PLACEHOLDER =
+  "data:image/png;base64,iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAQAAAC1HAwCAAAAC0lEQVR42mNkYAAAAAYAAjCB0C8AAAAASUVORK5CYII=";
+
+const CORS_HEADERS = {
+  "Access-Control-Allow-Origin": "*",
+  "Access-Control-Allow-Methods": "POST, OPTIONS",
+  "Access-Control-Allow-Headers": "Content-Type, Authorization",
+};
+
+Deno.serve(async (req: Request) => {
+  if (req.method === "OPTIONS") {
+    return new Response(null, { status: 204, headers: CORS_HEADERS });
+  }
+
+  try {
+    const body = await req.json();
+    const urls = [body.url1, body.url2, body.url3].filter(Boolean);
+
+    const images: Record<string, string> = {};
+
+    // Baixa e converte cada imagem em paralelo
+    const results = await Promise.allSettled(
+      urls.map(async (url: string, i: number) => {
+        const response = await fetch(url);
+        if (!response.ok) throw new Error(`HTTP ${response.status}`);
+        const buffer = await response.arrayBuffer();
+        const base64 = btoa(
+          new Uint8Array(buffer).reduce(
+            (data, byte) => data + String.fromCharCode(byte),
+            ""
+          )
+        );
+        images[`image${i + 1}`] = `data:image/jpeg;base64,${base64}`;
+      })
+    );
+
+    // Fallback: se falhou, usa a URL original
+    results.forEach((result, i) => {
+      if (result.status === "rejected") {
+        images[`image${i + 1}`] = urls[i];
+      }
+    });
+
+    // Preenche imagens faltantes com placeholder
+    for (let i = 1; i <= 3; i++) {
+      if (!images[`image${i}`]) {
+        images[`image${i}`] = PLACEHOLDER;
+      }
+    }
+
+    return new Response(JSON.stringify(images), {
+      headers: { "Content-Type": "application/json", ...CORS_HEADERS },
+    });
+  } catch (e) {
+    return new Response(
+      JSON.stringify({ error: e instanceof Error ? e.message : "Erro desconhecido" }),
+      { status: 400, headers: { "Content-Type": "application/json", ...CORS_HEADERS } }
+    );
+  }
+});

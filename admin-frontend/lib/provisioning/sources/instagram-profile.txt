@@ -1,0 +1,98 @@
+import { serve } from "https://deno.land/std@0.224.0/http/server.ts";
+import { createClient } from "https://esm.sh/@supabase/supabase-js@2";
+
+const supabaseUrl = Deno.env.get("SUPABASE_URL") ?? "";
+const serviceKey = Deno.env.get("SUPABASE_SERVICE_ROLE_KEY") ?? "";
+const rapidApiKey = Deno.env.get("RAPIDAPI_KEY") ?? "";
+
+const supabase = createClient(supabaseUrl, serviceKey);
+
+const corsHeaders = {
+  "Access-Control-Allow-Origin": "*",
+  "Access-Control-Allow-Headers": "authorization, x-client-info, apikey, content-type",
+  "Access-Control-Allow-Methods": "GET, POST, OPTIONS",
+};
+
+async function cacheAvatar(username: string, picUrl: string | null): Promise<string | null> {
+  if (!picUrl) return null;
+  const bucket = "instagram_avatars";
+  const filePath = `${username}.jpg`;
+  try {
+    console.log(`[instagram-profile] Caching avatar for ${username}`);
+    const imgRes = await fetch(picUrl);
+    if (!imgRes.ok) throw new Error(`Avatar fetch failed: ${imgRes.status}`);
+    const buffer = new Uint8Array(await imgRes.arrayBuffer());
+    const { error: uploadError } = await supabase.storage.from(bucket).upload(filePath, buffer, { contentType: "image/jpeg", upsert: true });
+    if (uploadError) { console.error(`[instagram-profile] Upload error:`, uploadError); return null; }
+    const { data } = supabase.storage.from(bucket).getPublicUrl(filePath);
+    console.log(`[instagram-profile] Avatar cached: ${data.publicUrl}`);
+    return data.publicUrl ?? null;
+  } catch (err) { console.error(`[instagram-profile] Avatar cache error:`, err); return null; }
+}
+
+serve(async (req) => {
+  if (req.method === "OPTIONS") return new Response(null, { status: 200, headers: corsHeaders });
+
+  const executionId = Math.random().toString(36).substring(2, 10);
+  console.log(`[instagram-profile] Execution ID: ${executionId}`);
+
+  const { searchParams } = new URL(req.url);
+  let username = searchParams.get("username");
+
+  if (!username && req.method === "POST") {
+    try { const body = await req.json(); username = body.username; console.log(`[instagram-profile] Username received from body: ${username}`); } catch (e) { console.log(`[instagram-profile] Could not parse body`); }
+  }
+
+  username = username?.trim().toLowerCase().replace(/^@/, "") || "";
+  if (!username) {
+    console.log(`[instagram-profile] No username provided`);
+    return new Response(JSON.stringify({ error: "username required" }), { status: 400, headers: { "Content-Type": "application/json", ...corsHeaders } });
+  }
+
+  console.log(`[instagram-profile] Fetching profile for: ${username}`);
+
+  try {
+    const headers: Record<string, string> = { "X-RapidAPI-Key": rapidApiKey, "X-RapidAPI-Host": "instagram-looter2.p.rapidapi.com" };
+    const rapidApiUrl = `https://instagram-looter2.p.rapidapi.com/profile2?username=${username}`;
+    console.log(`[instagram-profile] Calling RapidAPI: ${rapidApiUrl}`);
+
+    const apiResp = await fetch(rapidApiUrl, { headers, signal: AbortSignal.timeout(20000) });
+    console.log(`[instagram-profile] RapidAPI response status: ${apiResp.status}`);
+
+    if (!apiResp.ok) {
+      const errorText = await apiResp.text();
+      console.error(`[instagram-profile] RapidAPI error: ${errorText}`);
+      return new Response(JSON.stringify({ error: "account_not_found", message: "Conta nao encontrada" }), { status: 404, headers: { "Content-Type": "application/json", ...corsHeaders } });
+    }
+
+    const raw = await apiResp.json();
+    const user = raw ?? {};
+
+    if (user.status === false || user.errorMessage?.toLowerCase().includes("not exist") || user.errorMessage?.toLowerCase().includes("not found")) {
+      console.log(`[instagram-profile] Account @${username} does not exist (API response)`);
+      return new Response(JSON.stringify({ error: "account_not_found", message: "Esta conta nao existe" }), { status: 404, headers: { "Content-Type": "application/json", ...corsHeaders } });
+    }
+
+    const picUrl = user.hd_profile_pic_url_info?.url ?? user.profile_pic_url ?? null;
+    const cachedUrl = await cacheAvatar(username, picUrl);
+
+    const profile = {
+      username: username,
+      profilePicUrl: cachedUrl ?? picUrl,
+      fullName: user.full_name ?? username,
+      biography: user.biography ?? user.bio ?? "",
+      followersCount: user.follower_count ?? 0,
+      followingCount: user.following_count ?? 0,
+      postsCount: user.media_count ?? 0,
+      isVerified: user.is_verified ?? false,
+    };
+
+    console.log(`[instagram-profile] Profile found:`, { username: profile.username, fullName: profile.fullName, followers: profile.followersCount, hasAvatar: !!profile.profilePicUrl });
+
+    return new Response(JSON.stringify(profile), { status: 200, headers: { "Content-Type": "application/json", ...corsHeaders } });
+  } catch (err) {
+    const isTimeout = (err as Error)?.name === "AbortError";
+    console.error(`[instagram-profile] Error:`, isTimeout ? "Timeout" : err);
+    return new Response(JSON.stringify({ error: "internal" }), { status: 500, headers: { "Content-Type": "application/json", ...corsHeaders } });
+  }
+});

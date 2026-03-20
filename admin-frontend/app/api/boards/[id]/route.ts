@@ -1,14 +1,15 @@
 import { NextResponse } from "next/server";
-import { supabaseAdmin } from "@/lib/supabase-admin";
+import { getStudentSupabase } from "@/lib/supabase-student";
 
 export async function PUT(
   request: Request,
   { params }: { params: Promise<{ id: string }> }
 ) {
+  const supabase = await getStudentSupabase();
   const { id } = await params;
   const body = await request.json();
 
-  const { data, error } = await supabaseAdmin
+  const { data, error } = await supabase
     .from("kanban_boards")
     .update({
       name: body.name,
@@ -35,9 +36,10 @@ export async function DELETE(
   _request: Request,
   { params }: { params: Promise<{ id: string }> }
 ) {
+  const supabase = await getStudentSupabase();
   const { id } = await params;
 
-  const { error } = await supabaseAdmin
+  const { error } = await supabase
     .from("kanban_boards")
     .delete()
     .eq("id", id);
