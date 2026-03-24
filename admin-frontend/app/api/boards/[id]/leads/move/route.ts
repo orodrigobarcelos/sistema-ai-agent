@@ -19,21 +19,38 @@ async function updateChatwootKanbanStage(phone: string, columnName: string, boar
     const { chatwoot_url, chatwoot_account_id } = setup;
     const chatwoot_api_token = decrypt(setup.chatwoot_api_token);
 
-    // Search contact by phone
+    // Search contact by phone — fallback to last 8 digits (9th digit mismatch)
+    const phoneDigits = phone.replace(/\D/g, "");
+    const last8 = phoneDigits.slice(-8);
+
+    const matchByLast8 = (contacts: { phone_number: string | null }[]) =>
+      contacts.find((c) => {
+        const cDigits = c.phone_number?.replace(/\D/g, "") || "";
+        return cDigits.slice(-8) === last8;
+      });
+
+    // eslint-disable-next-line @typescript-eslint/no-explicit-any
+    let contact: any;
+
     const searchRes = await fetch(
       `${chatwoot_url}/api/v1/accounts/${chatwoot_account_id}/contacts/search?q=${encodeURIComponent(phone)}`,
       { headers: { api_access_token: chatwoot_api_token } }
     );
-    if (!searchRes.ok) return;
+    if (searchRes.ok) {
+      const searchData = await searchRes.json();
+      contact = matchByLast8(searchData.payload || []);
+    }
 
-    const searchData = await searchRes.json();
-    const phoneDigits = phone.replace(/\D/g, "");
-    const last8 = phoneDigits.slice(-8);
-
-    const contact = (searchData.payload || []).find((c: { phone_number: string | null }) => {
-      const cDigits = c.phone_number?.replace(/\D/g, "") || "";
-      return cDigits.slice(-8) === last8;
-    });
+    if (!contact) {
+      const fallbackRes = await fetch(
+        `${chatwoot_url}/api/v1/accounts/${chatwoot_account_id}/contacts/search?q=${encodeURIComponent(last8)}`,
+        { headers: { api_access_token: chatwoot_api_token } }
+      );
+      if (fallbackRes.ok) {
+        const fallbackData = await fallbackRes.json();
+        contact = matchByLast8(fallbackData.payload || []);
+      }
+    }
 
     if (!contact) return;
 
