@@ -147,19 +147,15 @@ export function KanbanBoard({ boardId, columns, onColumnsChange }: KanbanBoardPr
       onDragOver={handleDragOver}
       onDragEnd={handleDragEnd}
     >
-      <div className="flex gap-4 overflow-x-auto pb-4" style={{ minHeight: "70vh" }}>
+      <div className="flex gap-4 overflow-x-auto pb-4 h-[calc(100vh-160px)]">
         {columns.map((column) => (
           <div
             key={column.id}
-            className="flex flex-col w-72 min-w-72 rounded-lg bg-muted/40 border"
+            className="flex flex-col w-72 min-w-72 rounded-lg bg-muted/50 border"
           >
             {/* Column header */}
             <div className="flex items-center justify-between px-3 py-2 border-b">
               <div className="flex items-center gap-2">
-                <div
-                  className="h-2.5 w-2.5 rounded-full"
-                  style={{ backgroundColor: column.color || "#6B7280" }}
-                />
                 <span className="text-sm font-medium truncate">{column.name}</span>
               </div>
               <Badge variant="secondary" className="text-xs">

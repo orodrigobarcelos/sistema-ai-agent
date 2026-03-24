@@ -12,14 +12,15 @@ interface SetupInfo {
 }
 
 const FUNNEL_LABELS: Record<number, string> = {
-  1: "Basico (Chatwoot + N8N + Supabase)",
-  2: "Basico + Captura de Leads",
+  1: "Básico (Chatwoot + N8N + Supabase)",
+  2: "Básico + Captura de Leads",
   3: "Completo com Instagram",
 };
 
 export default function SettingsPage() {
   const [setup, setSetup] = useState<SetupInfo | null>(null);
   const [userName, setUserName] = useState("");
+  const [userEmail, setUserEmail] = useState("");
   const [loading, setLoading] = useState(true);
 
   useEffect(() => {
@@ -27,6 +28,7 @@ export default function SettingsPage() {
       .then((r) => r.json())
       .then((data) => {
         setUserName(data.user?.name || "");
+        setUserEmail(data.user?.email || "");
         setSetup(data.setup || null);
       })
       .finally(() => setLoading(false));
@@ -42,31 +44,35 @@ export default function SettingsPage() {
 
   return (
     <div>
-      <h1 className="text-2xl font-bold">Configuracoes</h1>
+      <h1 className="text-2xl font-bold">Configurações</h1>
       <p className="text-muted-foreground mt-1">Dados do seu projeto Supabase e Chatwoot.</p>
 
       <div className="mt-8 grid gap-6 max-w-xl">
-        <div className="rounded-lg border p-6">
+        <div className="rounded-lg border bg-card p-6">
           <h2 className="text-lg font-semibold mb-4">Conta</h2>
           <div className="flex flex-col gap-2 text-sm">
             <div className="flex justify-between">
               <span className="text-muted-foreground">Nome</span>
               <span>{userName}</span>
             </div>
+            <div className="flex justify-between">
+              <span className="text-muted-foreground">Email</span>
+              <span>{userEmail}</span>
+            </div>
           </div>
         </div>
 
         {setup ? (
           <>
-          <div className="rounded-lg border p-6">
+          <div className="rounded-lg border bg-card p-6">
             <h2 className="text-lg font-semibold mb-4">Supabase</h2>
             <div className="flex flex-col gap-3 text-sm">
               <div className="flex justify-between">
                 <span className="text-muted-foreground">Arquitetura de Funil</span>
-                <span>Opcao {setup.funnel_option} - {FUNNEL_LABELS[setup.funnel_option]}</span>
+                <span>Arquitetura {setup.funnel_option} - {FUNNEL_LABELS[setup.funnel_option]}</span>
               </div>
               <div className="flex justify-between">
-                <span className="text-muted-foreground">Project Ref</span>
+                <span className="text-muted-foreground">Project ID</span>
                 <span className="font-mono">{setup.supabase_project_ref}</span>
               </div>
               <div className="flex justify-between">
@@ -76,14 +82,14 @@ export default function SettingsPage() {
                 </span>
               </div>
               <div className="flex justify-between">
-                <span className="text-muted-foreground">Steps concluidos</span>
+                <span className="text-muted-foreground">Steps concluídos</span>
                 <span>{setup.completed_steps?.length || 0}</span>
               </div>
             </div>
           </div>
 
           {setup.chatwoot_url && (
-            <div className="rounded-lg border p-6">
+            <div className="rounded-lg border bg-card p-6">
               <h2 className="text-lg font-semibold mb-4">Chatwoot</h2>
               <div className="flex flex-col gap-3 text-sm">
                 <div className="flex justify-between">
@@ -103,8 +109,8 @@ export default function SettingsPage() {
           )}
           </>
         ) : (
-          <div className="rounded-lg border p-6 text-muted-foreground">
-            Setup nao realizado. Acesse /setup para configurar.
+          <div className="rounded-lg border bg-card p-6 text-muted-foreground">
+            Setup não realizado. Acesse /setup para configurar.
           </div>
         )}
       </div>

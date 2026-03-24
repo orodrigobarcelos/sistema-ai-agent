@@ -1,11 +1,12 @@
 "use client";
 
+import { useState } from "react";
 import Link from "next/link";
 import { usePathname, useRouter } from "next/navigation";
 import { cn } from "@/lib/utils";
 
 const navItems = [
-  { href: "/settings", label: "Configuracoes", icon: SettingsIcon },
+  { href: "/settings", label: "Configurações", icon: SettingsIcon },
   { href: "/boards", label: "Kanban", icon: KanbanIcon },
   { href: "/contacts", label: "Download Contatos", icon: DownloadIcon },
 ];
@@ -13,6 +14,7 @@ const navItems = [
 export function Sidebar() {
   const pathname = usePathname();
   const router = useRouter();
+  const [collapsed, setCollapsed] = useState(false);
 
   async function handleLogout() {
     await fetch("/api/auth/logout", { method: "POST" });
@@ -20,10 +22,31 @@ export function Sidebar() {
   }
 
   return (
-    <aside className="w-64 border-r bg-muted/30 min-h-screen p-4 flex flex-col">
-      <div className="px-3 py-4 mb-4">
-        <h1 className="text-lg font-semibold">Admin</h1>
-        <p className="text-xs text-muted-foreground">Gerenciamento de Leads</p>
+    <aside
+      className={cn(
+        "border-r bg-card min-h-screen p-4 flex flex-col transition-all duration-200",
+        collapsed ? "w-20" : "w-64"
+      )}
+    >
+      {/* Header + toggle */}
+      <div className={cn("flex items-center mb-4", collapsed ? "justify-center py-2" : "px-1 py-2 justify-between")}>
+        {!collapsed && (
+          <img src="/logo-sav-sidebar.png" alt="SAV" className="w-full max-w-[180px] object-contain" />
+        )}
+        <button
+          onClick={() => setCollapsed(!collapsed)}
+          className="rounded-md p-1 text-muted-foreground hover:bg-accent hover:text-accent-foreground transition-colors group"
+          title={collapsed ? "Expandir menu" : "Recolher menu"}
+        >
+          {collapsed ? (
+            <div className="h-14 w-14 flex items-center justify-center">
+              <img src="/logo-sav-icon.png" alt="SAV" className="h-14 w-14 object-contain rounded group-hover:hidden" />
+              <ChevronRightIcon className="h-6 w-6 hidden group-hover:block" />
+            </div>
+          ) : (
+            <ChevronLeftIcon className="h-4 w-4" />
+          )}
+        </button>
       </div>
 
       <nav className="flex flex-col gap-1 flex-1">
@@ -31,27 +54,49 @@ export function Sidebar() {
           <Link
             key={item.href}
             href={item.href}
+            title={collapsed ? item.label : undefined}
             className={cn(
-              "flex items-center gap-3 rounded-md px-3 py-2 text-sm font-medium transition-colors hover:bg-accent hover:text-accent-foreground",
+              "flex items-center rounded-md text-sm font-medium transition-colors hover:bg-accent hover:text-accent-foreground",
+              collapsed ? "justify-center px-2 py-2" : "gap-3 px-3 py-2",
               pathname.startsWith(item.href)
                 ? "bg-accent text-accent-foreground"
                 : "text-muted-foreground"
             )}
           >
-            <item.icon className="h-4 w-4" />
-            {item.label}
+            <item.icon className="h-4 w-4 shrink-0" />
+            {!collapsed && item.label}
           </Link>
         ))}
       </nav>
 
       <button
         onClick={handleLogout}
-        className="flex items-center gap-3 rounded-md px-3 py-2 text-sm font-medium text-muted-foreground transition-colors hover:bg-accent hover:text-accent-foreground mt-auto"
+        title={collapsed ? "Sair" : undefined}
+        className={cn(
+          "flex items-center rounded-md text-sm font-medium text-muted-foreground transition-colors hover:bg-accent hover:text-accent-foreground mt-auto",
+          collapsed ? "justify-center px-2 py-2" : "gap-3 px-3 py-2"
+        )}
       >
-        <LogoutIcon className="h-4 w-4" />
-        Sair
+        <LogoutIcon className="h-4 w-4 shrink-0" />
+        {!collapsed && "Sair"}
       </button>
     </aside>
+  );
+}
+
+function ChevronLeftIcon({ className }: { className?: string }) {
+  return (
+    <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" className={className}>
+      <path d="m15 18-6-6 6-6" />
+    </svg>
+  );
+}
+
+function ChevronRightIcon({ className }: { className?: string }) {
+  return (
+    <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" className={className}>
+      <path d="m9 18 6-6-6-6" />
+    </svg>
   );
 }
 

@@ -1,4 +1,4 @@
-export function getTablesSql(option: 1 | 2 | 3): string {
+export function getTablesSql(option: 1 | 2 | 3, boardName: string = "Vendas"): string {
   let sql = `
 CREATE TABLE IF NOT EXISTS leads (
   id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
@@ -14,7 +14,6 @@ CREATE TABLE IF NOT EXISTS leads (
   utm_term TEXT,
   created_at TIMESTAMPTZ NOT NULL DEFAULT now(),
   session_id TEXT UNIQUE,
-  followup_count INTEGER DEFAULT 0,
   last_followup_at TIMESTAMPTZ,
   completed_followups JSONB DEFAULT '[]'::jsonb,
   followup_attempts JSONB DEFAULT '{}'::jsonb
@@ -38,7 +37,6 @@ CREATE TABLE IF NOT EXISTS kanban_columns (
   id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
   board_id UUID NOT NULL REFERENCES kanban_boards(id),
   name TEXT NOT NULL,
-  color TEXT DEFAULT '#6B7280',
   position INTEGER NOT NULL DEFAULT 0,
   created_at TIMESTAMPTZ NOT NULL DEFAULT now()
 );
@@ -116,29 +114,30 @@ CREATE TABLE IF NOT EXISTS personalizations (
 );`;
   }
 
-  // Seed: criar board Vendas com 10 colunas
+  // Seed: criar board com nome customizado e 10 colunas
+  const safeBoardName = boardName.replace(/'/g, "''");
   sql += `
 
 DO $$
 DECLARE v_board_id UUID;
 BEGIN
   INSERT INTO kanban_boards (name, description)
-  VALUES ('Vendas', 'Quadro kanban de vendas')
+  VALUES ('${safeBoardName}', 'Quadro kanban de ${safeBoardName.toLowerCase()}')
   ON CONFLICT (name) DO NOTHING
   RETURNING id INTO v_board_id;
 
   IF v_board_id IS NOT NULL THEN
-    INSERT INTO kanban_columns (board_id, name, color, position) VALUES
-      (v_board_id, 'RECEBIDO', '#6B7280', 0),
-      (v_board_id, 'RESPONDEU', '#6B7280', 1),
-      (v_board_id, 'EM FECHAMENTO', '#6B7280', 2),
-      (v_board_id, 'FALAR C/ HUMANO', '#6B7280', 3),
-      (v_board_id, 'CARRINHO ABANDONADO', '#6B7280', 4),
-      (v_board_id, 'COMPRA RECUSADA', '#6B7280', 5),
-      (v_board_id, 'PAGAMENTO GERADO', '#6B7280', 6),
-      (v_board_id, 'FECHADO', '#6B7280', 7),
-      (v_board_id, 'PERDIDO', '#6B7280', 8),
-      (v_board_id, 'REEMBOLSO', '#6B7280', 9);
+    INSERT INTO kanban_columns (board_id, name, position) VALUES
+      (v_board_id, 'RECEBIDO', 0),
+      (v_board_id, 'RESPONDEU', 1),
+      (v_board_id, 'EM FECHAMENTO', 2),
+      (v_board_id, 'FALAR C/ HUMANO', 3),
+      (v_board_id, 'CARRINHO ABANDONADO', 4),
+      (v_board_id, 'COMPRA RECUSADA', 5),
+      (v_board_id, 'PAGAMENTO GERADO', 6),
+      (v_board_id, 'FECHADO', 7),
+      (v_board_id, 'PERDIDO', 8),
+      (v_board_id, 'REEMBOLSO', 9);
   END IF;
 END $$;`;
 
@@ -189,7 +188,7 @@ DECLARE
   v_board_id UUID;
   v_result JSON;
 BEGIN
-  SELECT id INTO v_board_id FROM kanban_boards WHERE name = p_kanban_nome;
+  SELECT id INTO v_board_id FROM kanban_boards WHERE LOWER(name) = LOWER(p_kanban_nome);
   IF v_board_id IS NULL THEN RETURN '[]'::JSON; END IF;
   WITH board_leads AS (
     SELECT l.id AS lead_id, l.name AS lead_name, l.whatsapp, kc.name AS column_name,
@@ -462,25 +461,31 @@ CREATE TRIGGER trg_link_lead_session_id
   FOR EACH ROW EXECUTE FUNCTION link_lead_session_id();`;
 }
 
+function rlsBlock(table: string): string {
+  return `
+ALTER TABLE ${table} ENABLE ROW LEVEL SECURITY;
+DROP POLICY IF EXISTS "service_role_full_access" ON ${table};
+CREATE POLICY "service_role_full_access" ON ${table} FOR ALL USING (auth.role() = 'service_role') WITH CHECK (auth.role() = 'service_role');`;
+}
+
 export function getRlsSql(option: 1 | 2 | 3): string {
-  let sql = `
-ALTER TABLE leads ENABLE ROW LEVEL SECURITY;
-ALTER TABLE n8n_chat_histories_whatsapp ENABLE ROW LEVEL SECURITY;
-ALTER TABLE kanban_boards ENABLE ROW LEVEL SECURITY;
-ALTER TABLE kanban_columns ENABLE ROW LEVEL SECURITY;
-ALTER TABLE kanban_lead_positions ENABLE ROW LEVEL SECURITY;
-ALTER TABLE chat_control ENABLE ROW LEVEL SECURITY;
-ALTER TABLE conversation_summaries ENABLE ROW LEVEL SECURITY;
-ALTER TABLE workflow_control ENABLE ROW LEVEL SECURITY;
-ALTER TABLE message_buffer ENABLE ROW LEVEL SECURITY;`;
+  const tables = [
+    "leads",
+    "n8n_chat_histories_whatsapp",
+    "kanban_boards",
+    "kanban_columns",
+    "kanban_lead_positions",
+    "chat_control",
+    "conversation_summaries",
+    "workflow_control",
+    "message_buffer",
+  ];
 
   if (option === 3) {
-    sql += `
-ALTER TABLE instagram ENABLE ROW LEVEL SECURITY;
-ALTER TABLE personalizations ENABLE ROW LEVEL SECURITY;`;
+    tables.push("instagram", "personalizations");
   }
 
-  return sql;
+  return tables.map(rlsBlock).join("\n");
 }
 
 export function getStorageSql(): string {

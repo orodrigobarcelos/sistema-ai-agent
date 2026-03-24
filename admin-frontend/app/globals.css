@@ -133,3 +133,14 @@
     cursor: pointer;
   }
 }
+
+/* Glow pulse animation */
+@keyframes pulse-glow {
+  0%, 100% { opacity: 1; }
+  50% { opacity: 0.5; }
+}
+
+.animate-pulse-glow {
+  opacity: 1;
+  animation: pulse-glow 4s ease-in-out infinite;
+}

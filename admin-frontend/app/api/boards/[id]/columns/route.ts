@@ -15,7 +15,8 @@ export async function GET(
     .order("position");
 
   if (error) {
-    return NextResponse.json({ error: error.message }, { status: 500 });
+    console.error("[columns GET]", error.message);
+    return NextResponse.json({ error: "Erro ao carregar colunas." }, { status: 500 });
   }
 
   return NextResponse.json(data);
@@ -56,7 +57,8 @@ export async function POST(
         { status: 409 }
       );
     }
-    return NextResponse.json({ error: error.message }, { status: 500 });
+    console.error("[columns POST]", error.message);
+    return NextResponse.json({ error: "Erro ao criar coluna." }, { status: 500 });
   }
 
   return NextResponse.json(data, { status: 201 });

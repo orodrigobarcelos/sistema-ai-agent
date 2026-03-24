@@ -29,7 +29,6 @@ export interface BoardColumn {
   id: string;
   board_id: string;
   name: string;
-  color: string | null;
   position: number;
   created_at: string;
 }

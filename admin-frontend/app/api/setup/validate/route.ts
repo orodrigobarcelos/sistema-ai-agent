@@ -6,7 +6,7 @@ export async function POST(request: Request) {
 
     if (!access_token || !project_ref) {
       return NextResponse.json(
-        { valid: false, error: "Access Token e Project Ref sao obrigatorios" },
+        { valid: false, error: "Access Token e Project ID sao obrigatorios" },
         { status: 400 }
       );
     }
@@ -18,7 +18,7 @@ export async function POST(request: Request) {
 
     if (!res.ok) {
       return NextResponse.json(
-        { valid: false, error: "Token ou Project Ref invalidos" },
+        { valid: false, error: "Token ou Project ID invalidos" },
         { status: 400 }
       );
     }

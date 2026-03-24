@@ -1,6 +1,7 @@
 import { NextResponse } from "next/server";
 import { supabaseAdmin } from "@/lib/supabase-admin";
 import { getCurrentUser } from "@/lib/auth";
+import { decrypt } from "@/lib/crypto";
 
 export async function GET(request: Request) {
   try {
@@ -27,7 +28,8 @@ export async function GET(request: Request) {
       return NextResponse.json({ error: "Chatwoot nao configurado" }, { status: 400 });
     }
 
-    const { chatwoot_url, chatwoot_account_id, chatwoot_api_token } = setup;
+    const { chatwoot_url, chatwoot_account_id } = setup;
+    const chatwoot_api_token = decrypt(setup.chatwoot_api_token);
 
     // Search contact by phone
     const searchRes = await fetch(

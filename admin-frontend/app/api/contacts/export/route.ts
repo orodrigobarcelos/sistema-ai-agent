@@ -1,6 +1,7 @@
 import { supabaseAdmin } from "@/lib/supabase-admin";
 import { getCurrentUser } from "@/lib/auth";
 import { createClient } from "@supabase/supabase-js";
+import { decrypt } from "@/lib/crypto";
 
 const CONCURRENCY = 30;
 const PAGE_SIZE = 15;
@@ -63,7 +64,8 @@ export async function GET() {
       });
     }
 
-    const { chatwoot_url, chatwoot_account_id, chatwoot_api_token } = setup;
+    const { chatwoot_url, chatwoot_account_id } = setup;
+    const chatwoot_api_token = decrypt(setup.chatwoot_api_token);
     const baseUrl = `${chatwoot_url}/api/v1/accounts/${chatwoot_account_id}`;
 
     const stream = new ReadableStream({
@@ -142,7 +144,7 @@ export async function GET() {
 
           if (setup.supabase_url && setup.supabase_service_role_key) {
             try {
-              const studentDb = createClient(setup.supabase_url, setup.supabase_service_role_key);
+              const studentDb = createClient(setup.supabase_url, decrypt(setup.supabase_service_role_key));
 
               const { data: positions } = await studentDb
                 .from("kanban_lead_positions")

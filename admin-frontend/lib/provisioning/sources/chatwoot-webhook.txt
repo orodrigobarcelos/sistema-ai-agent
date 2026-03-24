@@ -31,6 +31,30 @@ async function uploadToGeminiFileAPI(buffer: ArrayBuffer, mimeType: string, disp
   return { fileUri, fileName };
 }
 
+// Resolver session_id a partir do payload do webhook ou fallback via API
+function getSessionIdFromPayload(payload: any): string | null {
+  const sender = payload.conversation?.meta?.sender;
+  if (sender?.identifier) return sender.identifier;
+  if (sender?.phone_number) return `${sender.phone_number.replace("+", "")}@s.whatsapp.net`;
+  return null;
+}
+
+async function getSessionIdWithFallback(payload: any, fallbackType: "conversation" | "contact", fallbackId: number | string): Promise<string | null> {
+  let sessionId = getSessionIdFromPayload(payload);
+  if (sessionId) return sessionId;
+  const endpoint = fallbackType === "conversation"
+    ? `${CHATWOOT_URL}/api/v1/accounts/${CHATWOOT_ACCOUNT_ID}/conversations/${fallbackId}`
+    : `${CHATWOOT_URL}/api/v1/accounts/${CHATWOOT_ACCOUNT_ID}/contacts/${fallbackId}`;
+  try {
+    const res = await fetch(endpoint, { headers: { api_access_token: CHATWOOT_API_TOKEN } });
+    const json = await res.json();
+    const contact = fallbackType === "conversation" ? json.meta?.sender : (json.payload ?? json);
+    sessionId = contact?.identifier;
+    if (!sessionId && contact?.phone_number) sessionId = `${contact.phone_number.replace("+", "")}@s.whatsapp.net`;
+  } catch (err) { console.log("[fallback] erro:", String(err)); }
+  return sessionId;
+}
+
 Deno.serve(async (req: Request) => {
   if (req.method !== "POST") return new Response("Method not allowed", { status: 405 });
 
@@ -45,16 +69,13 @@ Deno.serve(async (req: Request) => {
       if (payload.user?.type !== "user") return new Response(JSON.stringify({ skipped: true, reason: "not agent typing" }), { headers: { "Content-Type": "application/json" } });
       const conversationId = payload.conversation?.id;
       if (!conversationId) return new Response(JSON.stringify({ skipped: true, reason: "no conversation id" }), { headers: { "Content-Type": "application/json" } });
-      const convRes = await fetch(`${CHATWOOT_URL}/api/v1/accounts/${CHATWOOT_ACCOUNT_ID}/conversations/${conversationId}`, { headers: { api_access_token: CHATWOOT_API_TOKEN } });
-      const convJson = await convRes.json(); const contact = convJson.meta?.sender;
-      let sessionId = contact?.identifier;
-      if (!sessionId && contact?.phone_number) { sessionId = `${contact.phone_number.replace("+", "")}@s.whatsapp.net`; }
+      const sessionId = await getSessionIdWithFallback(payload, "conversation", conversationId);
       if (!sessionId) return new Response(JSON.stringify({ skipped: true, reason: "no session_id for typing" }), { headers: { "Content-Type": "application/json" } });
       const typingUntil = new Date(Date.now() + 2 * 60 * 1000).toISOString();
       const { data: existing } = await supabase.from("chat_control").select("id").eq("session_id", sessionId).limit(1);
       if (existing && existing.length > 0) { await supabase.from("chat_control").update({ typing_until: typingUntil }).eq("session_id", sessionId); }
       else { await supabase.from("chat_control").insert({ session_id: sessionId, ai_paused: false, typing_until: typingUntil }); }
-      return new Response(JSON.stringify({ success: true, action: "typing_pause" }), { headers: { "Content-Type": "application/json" } });
+      return new Response(JSON.stringify({ success: true, action: "typing_pause", session_id: sessionId }), { headers: { "Content-Type": "application/json" } });
     }
 
     // EVENT: conversation_updated
@@ -63,10 +84,7 @@ Deno.serve(async (req: Request) => {
       const sender = payload.meta?.sender; let sessionId = sender?.identifier;
       if (!sessionId && sender?.phone_number) { sessionId = `${sender.phone_number.replace("+", "")}@s.whatsapp.net`; }
       if (!sessionId && payload.id) {
-        const convRes = await fetch(`${CHATWOOT_URL}/api/v1/accounts/${CHATWOOT_ACCOUNT_ID}/conversations/${payload.id}`, { headers: { api_access_token: CHATWOOT_API_TOKEN } });
-        const convJson = await convRes.json(); const contact = convJson.meta?.sender;
-        sessionId = contact?.identifier;
-        if (!sessionId && contact?.phone_number) { sessionId = `${contact.phone_number.replace("+", "")}@s.whatsapp.net`; }
+        sessionId = await getSessionIdWithFallback(payload, "conversation", payload.id);
       }
       if (!sessionId) return new Response(JSON.stringify({ skipped: true, reason: "no session_id for label" }), { headers: { "Content-Type": "application/json" } });
       const { data: existing } = await supabase.from("chat_control").select("id, ai_paused").eq("session_id", sessionId).limit(1);
@@ -77,59 +95,37 @@ Deno.serve(async (req: Request) => {
       return new Response(JSON.stringify({ success: true, action: shouldPause ? "paused" : "resumed" }), { headers: { "Content-Type": "application/json" } });
     }
 
-    // EVENT: contact_updated — sincronizar kanban via custom attributes (kanban_*)
+    // EVENT: contact_updated
     if (event === "contact_updated") {
       const customAttrs = payload.custom_attributes || payload.contact?.custom_attributes || {};
-
-      // Buscar atributos que comecam com "kanban_" — o sufixo e o nome do board
       const kanbanEntries = Object.entries(customAttrs).filter(([key]) => key.startsWith("kanban_"));
       if (kanbanEntries.length === 0) return new Response(JSON.stringify({ skipped: true, reason: "no kanban_ attribute" }), { headers: { "Content-Type": "application/json" } });
-
-      // Resolver lead por session_id (identifier) — mais confiavel que lead_id
       const identifier = payload.identifier || payload.contact?.identifier;
       const phone = payload.phone_number || payload.contact?.phone_number;
       let sessionId = identifier;
       if (!sessionId && phone) { sessionId = `${phone.replace("+", "")}@s.whatsapp.net`; }
-
       let leadId: string | null = null;
-
       if (sessionId) {
         const { data: leadData } = await supabase.from("leads").select("id").eq("session_id", sessionId).limit(1);
         if (leadData && leadData.length > 0) leadId = leadData[0].id;
       }
-
       if (!leadId && phone) {
-        const digits = phone.replace(/\D/g, "");
-        const last8 = digits.slice(-8);
+        const digits = phone.replace(/\D/g, ""); const last8 = digits.slice(-8);
         const { data: leadsByPhone } = await supabase.from("leads").select("id, whatsapp").limit(50);
         if (leadsByPhone) {
           const match = leadsByPhone.find((l: { whatsapp: string }) => l.whatsapp.replace(/\D/g, "").slice(-8) === last8);
           if (match) leadId = match.id;
         }
       }
-
-      if (!leadId) {
-        console.log("[contact_updated] lead nao encontrado:", { session_id: sessionId, phone });
-        return new Response(JSON.stringify({ skipped: true, reason: "lead not found" }), { headers: { "Content-Type": "application/json" } });
-      }
-
-      // Mover o lead em cada board referenciado pelos atributos kanban_*
+      if (!leadId) return new Response(JSON.stringify({ skipped: true, reason: "lead not found" }), { headers: { "Content-Type": "application/json" } });
       const results = [];
       for (const [key, columnName] of kanbanEntries) {
         if (!columnName || typeof columnName !== "string" || columnName.trim() === "") continue;
         const boardName = key.replace("kanban_", "").replace(/_/g, " ");
-        console.log("[contact_updated] movendo lead:", { lead_id: leadId, board: boardName, column: columnName });
-        const { error: rpcError } = await supabase.rpc("move_lead_to_board_column", {
-          p_lead_id: leadId,
-          p_board_name: boardName,
-          p_column_name: columnName,
-          p_moved_by: "chatwoot"
-        });
+        const { error: rpcError } = await supabase.rpc("move_lead_to_board_column", { p_lead_id: leadId, p_board_name: boardName, p_column_name: columnName, p_moved_by: "chatwoot" });
         if (rpcError) console.log("[contact_updated] erro:", rpcError.message);
-        else console.log("[contact_updated] movido com sucesso:", { board: boardName, column: columnName });
         results.push({ board: boardName, column: columnName, success: !rpcError });
       }
-
       return new Response(JSON.stringify({ success: true, action: "kanban_move", lead_id: leadId, results }), { headers: { "Content-Type": "application/json" } });
     }
 
@@ -146,27 +142,24 @@ Deno.serve(async (req: Request) => {
     if (!content && attachments.length === 0) return new Response(JSON.stringify({ skipped: true, reason: "no content and no attachments" }), { headers: { "Content-Type": "application/json" } });
     if (!contactId) return new Response(JSON.stringify({ skipped: true, reason: "no contact id" }), { headers: { "Content-Type": "application/json" } });
 
-    const contactRes = await fetch(`${CHATWOOT_URL}/api/v1/accounts/${CHATWOOT_ACCOUNT_ID}/contacts/${contactId}`, { headers: { api_access_token: CHATWOOT_API_TOKEN } });
-    const contactJson = await contactRes.json(); const contact = contactJson.payload ?? contactJson;
-    let sessionId = contact.identifier;
-    if (!sessionId && contact.phone_number) { sessionId = `${contact.phone_number.replace("+", "")}@s.whatsapp.net`; }
+    // Resolver session_id: payload primeiro, fallback API
+    const sessionId = await getSessionIdWithFallback(payload, "contact", contactId);
     if (!sessionId) return new Response(JSON.stringify({ skipped: true, reason: "no session_id found" }), { headers: { "Content-Type": "application/json" } });
 
     // Verificar/criar lead
     const { data: existingLead } = await supabase.from("leads").select("id").eq("session_id", sessionId).limit(1);
     if (!existingLead || existingLead.length === 0) {
-      const phoneNumber = contact.phone_number || `+${sessionId.replace("@s.whatsapp.net", "")}`;
-      const leadName = contact.name || phoneNumber;
+      const senderInfo = payload.conversation?.meta?.sender;
+      const phoneNumber = senderInfo?.phone_number || `+${sessionId.replace("@s.whatsapp.net", "")}`;
+      const leadName = senderInfo?.name || phoneNumber;
       const { error: leadError } = await supabase.from("leads").insert({ name: leadName, whatsapp: phoneNumber, session_id: sessionId });
       if (leadError) console.log("[lead] erro ao criar:", leadError.message);
-      else console.log("[lead] criado:", { session_id: sessionId, name: leadName });
     }
 
     // Mensagem com attachments
     if (attachments.length > 0) {
       const results = []; const openaiKey = Deno.env.get("OPENAI_API_KEY"); const geminiKey = Deno.env.get("GEMINI_API_KEY");
       if (!openaiKey) return new Response(JSON.stringify({ error: "no OPENAI_API_KEY" }), { status: 500, headers: { "Content-Type": "application/json" } });
-
       for (const attachment of attachments) {
         if (attachment.file_type === "audio") {
           try {

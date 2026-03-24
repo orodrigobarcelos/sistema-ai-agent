@@ -2,6 +2,7 @@ import { NextResponse } from "next/server";
 import { getStudentSupabase } from "@/lib/supabase-student";
 import { supabaseAdmin } from "@/lib/supabase-admin";
 import { getCurrentUser } from "@/lib/auth";
+import { decrypt } from "@/lib/crypto";
 
 async function updateChatwootKanbanStage(phone: string, columnName: string, boardName: string, userId: string) {
   try {
@@ -15,7 +16,8 @@ async function updateChatwootKanbanStage(phone: string, columnName: string, boar
 
     if (!setup?.chatwoot_url || !setup?.chatwoot_api_token || !setup?.chatwoot_account_id) return;
 
-    const { chatwoot_url, chatwoot_account_id, chatwoot_api_token } = setup;
+    const { chatwoot_url, chatwoot_account_id } = setup;
+    const chatwoot_api_token = decrypt(setup.chatwoot_api_token);
 
     // Search contact by phone
     const searchRes = await fetch(

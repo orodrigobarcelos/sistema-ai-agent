@@ -17,7 +17,7 @@ export default async function AppLayout({
   return (
     <div className="flex min-h-screen overflow-hidden">
       <Sidebar />
-      <main className="flex-1 p-8 overflow-hidden">
+      <main className="flex-1 p-8 overflow-hidden bg-background">
         <Suspense
           fallback={
             <div className="flex items-center justify-center py-16">

@@ -70,9 +70,6 @@ export default function BoardKanbanPage() {
           </Button>
           <div>
             <h2 className="text-2xl font-bold tracking-tight">{board.name}</h2>
-            {board.description && (
-              <p className="text-muted-foreground text-sm">{board.description}</p>
-            )}
           </div>
         </div>
         <div className="flex gap-2">
@@ -109,7 +106,7 @@ export default function BoardKanbanPage() {
       }}>
         <DialogContent className="sm:max-w-md">
           <DialogHeader>
-            <DialogTitle>Colunas — {board.name}</DialogTitle>
+            <DialogTitle>Colunas: Kanban {board.name}</DialogTitle>
           </DialogHeader>
           <ColumnManager boardId={boardId} />
         </DialogContent>

@@ -107,7 +107,7 @@ export default function BoardsPage() {
             Gerencie os quadros de pipeline para acompanhar seus leads.
           </p>
         </div>
-        <Button onClick={handleCreate}>Novo Quadro</Button>
+        <Button onClick={handleCreate}>Novo quadro</Button>
       </div>
 
       {loading ? (
@@ -139,7 +139,7 @@ export default function BoardsPage() {
       <Dialog open={columnsOpen} onOpenChange={setColumnsOpen}>
         <DialogContent className="sm:max-w-md">
           <DialogHeader>
-            <DialogTitle>Colunas — {managingBoard?.name}</DialogTitle>
+            <DialogTitle>Colunas: Kanban {managingBoard?.name}</DialogTitle>
           </DialogHeader>
           {managingBoard && <ColumnManager boardId={managingBoard.id} />}
         </DialogContent>

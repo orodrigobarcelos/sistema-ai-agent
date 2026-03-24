@@ -1,5 +1,6 @@
 import { createClient } from "@supabase/supabase-js";
 import { getCurrentUser, getUserSetup } from "./auth";
+import { decrypt } from "./crypto";
 
 export async function getStudentSupabase() {
   const user = await getCurrentUser();
@@ -8,5 +9,6 @@ export async function getStudentSupabase() {
   const setup = await getUserSetup(user.id);
   if (!setup) throw new Error("Setup not completed");
 
-  return createClient(setup.supabase_url, setup.supabase_service_role_key);
+  const serviceRoleKey = decrypt(setup.supabase_service_role_key);
+  return createClient(setup.supabase_url, serviceRoleKey);
 }

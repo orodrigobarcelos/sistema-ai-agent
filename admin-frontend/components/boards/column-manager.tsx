@@ -108,7 +108,7 @@ export function ColumnManager({ boardId }: ColumnManagerProps) {
         {columns.map((col, index) => (
           <div
             key={col.id}
-            className="flex items-center gap-2 rounded-md border px-3 py-2"
+            className="flex items-center gap-2 rounded-md border bg-card px-3 py-2"
           >
             <div className="flex flex-col gap-0.5">
               <button

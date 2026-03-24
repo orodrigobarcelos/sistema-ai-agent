@@ -46,7 +46,8 @@ export async function POST(request: Request) {
       .single();
 
     if (error) {
-      return NextResponse.json({ error: error.message }, { status: 500 });
+      console.error("[register]", error.message);
+      return NextResponse.json({ error: "Erro ao criar conta." }, { status: 500 });
     }
 
     const token = await signToken(user);

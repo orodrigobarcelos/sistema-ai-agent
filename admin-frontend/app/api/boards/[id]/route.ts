@@ -26,7 +26,8 @@ export async function PUT(
         { status: 409 }
       );
     }
-    return NextResponse.json({ error: error.message }, { status: 500 });
+    console.error("[boards PUT]", error.message);
+    return NextResponse.json({ error: "Erro ao atualizar quadro." }, { status: 500 });
   }
 
   return NextResponse.json(data);
@@ -45,7 +46,8 @@ export async function DELETE(
     .eq("id", id);
 
   if (error) {
-    return NextResponse.json({ error: error.message }, { status: 500 });
+    console.error("[boards DELETE]", error.message);
+    return NextResponse.json({ error: "Erro ao excluir quadro." }, { status: 500 });
   }
 
   return NextResponse.json({ success: true });

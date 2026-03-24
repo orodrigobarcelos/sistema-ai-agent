@@ -29,7 +29,7 @@ export default function ContactsPage() {
       }
 
       const reader = res.body?.getReader();
-      if (!reader) throw new Error("Stream nao disponivel");
+      if (!reader) throw new Error("Stream não disponível");
 
       const decoder = new TextDecoder();
       let buffer = "";
@@ -76,15 +76,15 @@ export default function ContactsPage() {
     if (!progress) return "";
     switch (progress.phase) {
       case "contacts":
-        return `Buscando contatos... ${progress.current}/${progress.total} paginas (${progress.totalContacts} contatos)`;
+        return `Buscando contatos... ${progress.current}/${progress.total} páginas (${progress.totalContacts} contatos)`;
       case "labels":
         return `Buscando etiquetas... ${progress.current}/${progress.total} contatos`;
       case "kanban":
-        return "Buscando posicoes do Kanban...";
+        return "Buscando posições do Kanban...";
       case "generating":
         return "Gerando arquivo CSV...";
       case "done":
-        return "Download concluido!";
+        return "Download concluído!";
       default:
         return "";
     }
@@ -110,10 +110,10 @@ export default function ContactsPage() {
       </p>
 
       <div className="mt-8 max-w-xl">
-        <div className="rounded-lg border p-6">
+        <div className="rounded-lg border bg-card p-6">
           <h2 className="text-lg font-semibold mb-2">Exportar para CSV</h2>
           <p className="text-sm text-muted-foreground mb-6">
-            Todos os contatos serao exportados com seus atributos personalizados e etiquetas de conversa.
+            Todos os contatos serão exportados com seus atributos personalizados e etiquetas de conversa.
           </p>
 
           {!exporting && progress?.phase !== "done" && (
@@ -153,7 +153,7 @@ export default function ContactsPage() {
                   <path d="M22 11.08V12a10 10 0 1 1-5.93-9.14" />
                   <polyline points="22 4 12 14.01 9 11.01" />
                 </svg>
-                <span className="text-sm font-medium">Download concluido!</span>
+                <span className="text-sm font-medium">Download concluído!</span>
               </div>
               <button
                 onClick={startExport}
@@ -165,8 +165,8 @@ export default function ContactsPage() {
           )}
 
           {error && (
-            <div className="mt-4 rounded-md bg-red-50 border border-red-200 p-3">
-              <p className="text-sm text-red-700">{error}</p>
+            <div className="mt-4 rounded-md bg-red-500/10 border border-red-500/20 p-3">
+              <p className="text-sm text-red-400">{error}</p>
             </div>
           )}
         </div>

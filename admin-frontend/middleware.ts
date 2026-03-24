@@ -21,8 +21,13 @@ export async function middleware(request: NextRequest) {
   const token = request.cookies.get(COOKIE_NAME)?.value;
   const hasValidToken = token ? await isValidToken(token) : false;
 
+  // Redirect /register to /login
+  if (pathname === "/register") {
+    return NextResponse.redirect(new URL("/login", request.url));
+  }
+
   // Auth pages: redirect to /boards if already logged in
-  if (pathname === "/login" || pathname === "/register") {
+  if (pathname === "/login") {
     if (hasValidToken) {
       return NextResponse.redirect(new URL("/boards", request.url));
     }
@@ -47,6 +52,6 @@ export async function middleware(request: NextRequest) {
 
 export const config = {
   matcher: [
-    "/((?!_next/static|_next/image|favicon.ico|api/auth).*)",
+    "/((?!_next/static|_next/image|favicon.ico|api/auth|.*\\.png$|.*\\.jpg$|.*\\.svg$|.*\\.ico$|.*\\.webp$).*)",
   ],
 };
