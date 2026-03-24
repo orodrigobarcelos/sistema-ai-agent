@@ -72,7 +72,7 @@ export function KanbanCard({ lead, columnId }: KanbanCardProps) {
         style={style}
         {...attributes}
         {...listeners}
-        className="rounded-lg border bg-card p-3 shadow-sm cursor-grab active:cursor-grabbing hover:shadow-md transition-shadow group"
+        className="rounded-lg border border-zinc-600 bg-zinc-800 p-3 shadow-sm cursor-grab active:cursor-grabbing hover:shadow-md hover:bg-zinc-750 transition-all group"
       >
         <div className="flex items-start justify-between gap-2">
           <div className="min-w-0 flex-1">
