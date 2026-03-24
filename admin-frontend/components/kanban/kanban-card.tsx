@@ -6,6 +6,7 @@ import { Badge } from "@/components/ui/badge";
 import { useSortable } from "@dnd-kit/sortable";
 import { CSS } from "@dnd-kit/utilities";
 import { LeadDetailDialog } from "./lead-detail-dialog";
+import { toast } from "sonner";
 
 interface KanbanCardProps {
   lead: KanbanLead;
@@ -51,9 +52,11 @@ export function KanbanCard({ lead, columnId }: KanbanCardProps) {
       const data = await res.json();
       if (data.url) {
         window.open(data.url, "_blank");
+      } else {
+        toast.error(data.error || "Não foi possível abrir o Chatwoot");
       }
     } catch {
-      // silently fail
+      toast.error("Erro ao conectar com o Chatwoot");
     } finally {
       setLoading(false);
     }

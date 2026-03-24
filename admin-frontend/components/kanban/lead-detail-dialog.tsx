@@ -51,8 +51,11 @@ export function LeadDetailDialog({
     if (leadId) params.set("lead_id", leadId);
 
     fetch(`/api/chatwoot/contact-details?${params}`)
-      .then((res) => {
-        if (!res.ok) throw new Error("Erro ao carregar detalhes");
+      .then(async (res) => {
+        if (!res.ok) {
+          const body = await res.json().catch(() => ({}));
+          throw new Error(body.error || `Erro ao carregar detalhes (${res.status})`);
+        }
         return res.json();
       })
       .then(setDetails)

@@ -31,28 +31,53 @@ export async function GET(request: Request) {
     }
 
     const { chatwoot_url, chatwoot_account_id } = setup;
-    const chatwoot_api_token = decrypt(setup.chatwoot_api_token);
 
-    // Search contact by phone
+    let chatwoot_api_token: string;
+    try {
+      chatwoot_api_token = decrypt(setup.chatwoot_api_token);
+    } catch {
+      return NextResponse.json(
+        { error: "Erro ao decriptar token do Chatwoot. Verifique ENCRYPTION_KEY." },
+        { status: 500 }
+      );
+    }
+
+    // Search contact by phone — try full number first, fallback to last 8 digits
+    const phoneDigits = phone.replace(/\D/g, "");
+    const last8 = phoneDigits.slice(-8);
+
+    const matchByLast8 = (contacts: { phone_number: string | null }[]) =>
+      contacts.find((c) => {
+        const cDigits = c.phone_number?.replace(/\D/g, "") || "";
+        return cDigits.slice(-8) === last8;
+      });
+
+    // eslint-disable-next-line @typescript-eslint/no-explicit-any
+    let contact: any;
+
+    // 1st attempt: search with full phone
     const searchRes = await fetch(
       `${chatwoot_url}/api/v1/accounts/${chatwoot_account_id}/contacts/search?q=${encodeURIComponent(phone)}`,
       { headers: { api_access_token: chatwoot_api_token } }
     );
 
-    if (!searchRes.ok) {
-      return NextResponse.json({ error: "Erro ao buscar contato" }, { status: 500 });
+    if (searchRes.ok) {
+      const searchData = await searchRes.json();
+      contact = matchByLast8(searchData.payload || []);
     }
 
-    const searchData = await searchRes.json();
-    const contacts = searchData.payload || [];
+    // 2nd attempt: search with last 8 digits (handles 9th digit mismatch)
+    if (!contact) {
+      const fallbackRes = await fetch(
+        `${chatwoot_url}/api/v1/accounts/${chatwoot_account_id}/contacts/search?q=${encodeURIComponent(last8)}`,
+        { headers: { api_access_token: chatwoot_api_token } }
+      );
 
-    const phoneDigits = phone.replace(/\D/g, "");
-    const last8 = phoneDigits.slice(-8);
-
-    const contact = contacts.find((c: { phone_number: string | null }) => {
-      const cDigits = c.phone_number?.replace(/\D/g, "") || "";
-      return cDigits.slice(-8) === last8;
-    });
+      if (fallbackRes.ok) {
+        const fallbackData = await fallbackRes.json();
+        contact = matchByLast8(fallbackData.payload || []);
+      }
+    }
 
     if (!contact) {
       return NextResponse.json({ error: "Contato não encontrado no Chatwoot" }, { status: 404 });
@@ -115,7 +140,9 @@ export async function GET(request: Request) {
       conversation_url: conversationUrl,
       summary,
     });
-  } catch {
-    return NextResponse.json({ error: "Erro interno" }, { status: 500 });
+  } catch (err) {
+    const message = err instanceof Error ? err.message : "Erro interno";
+    console.error("[contact-details]", message);
+    return NextResponse.json({ error: message }, { status: 500 });
   }
 }
