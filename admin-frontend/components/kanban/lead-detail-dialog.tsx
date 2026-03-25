@@ -134,8 +134,8 @@ export function LeadDetailDialog({
                 <h3 className="text-sm font-medium mb-2">Atributos personalizados</h3>
                 <div className="rounded-md border divide-y text-sm">
                   {attrEntries.map(([key, value]) => (
-                    <div key={key} className="grid grid-cols-[140px_1fr] px-3 py-2.5">
-                      <span className="text-muted-foreground">{key}</span>
+                    <div key={key} className="flex flex-col gap-0.5 px-3 py-2.5">
+                      <span className="text-muted-foreground text-xs truncate">{key}</span>
                       <span className="break-all">{String(value)}</span>
                     </div>
                   ))}
