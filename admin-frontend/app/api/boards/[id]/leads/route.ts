@@ -31,7 +31,7 @@ export async function GET(
   const columnIds = columns.map((c) => c.id);
   const { data: positions } = await supabase
     .from("kanban_lead_positions")
-    .select("*, lead:leads(id, name, whatsapp, country_code, instagram)")
+    .select("*, lead:leads(*)")
     .in("column_id", columnIds)
     .order("position");
 
@@ -41,9 +41,9 @@ export async function GET(
       .filter((p) => p.lead)
       .map((p) => ({
         id: p.lead.id,
-        name: p.lead.name,
+        name: p.lead.name || p.lead.full_name || "",
         whatsapp: p.lead.whatsapp,
-        country_code: p.lead.country_code,
+        country_code: p.lead.country_code || "",
         instagram: p.lead.instagram,
         tags: [],
         position_id: p.id,
