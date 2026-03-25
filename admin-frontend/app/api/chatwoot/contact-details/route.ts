@@ -79,6 +79,26 @@ export async function GET(request: Request) {
       }
     }
 
+    // 3rd attempt: search by lead_id in custom_attributes (handles phone mismatch between Supabase and Chatwoot)
+    if (!contact && leadId) {
+      const filterRes = await fetch(
+        `${chatwoot_url}/api/v1/accounts/${chatwoot_account_id}/contacts/filter`,
+        {
+          method: "POST",
+          headers: { api_access_token: chatwoot_api_token, "Content-Type": "application/json" },
+          body: JSON.stringify({
+            payload: [{ attribute_key: "lead_id", filter_operator: "equal_to", values: [leadId], query_operator: null }],
+          }),
+        }
+      );
+
+      if (filterRes.ok) {
+        const filterData = await filterRes.json();
+        const contacts = filterData.payload || [];
+        if (contacts.length > 0) contact = contacts[0];
+      }
+    }
+
     if (!contact) {
       return NextResponse.json({ error: "Contato não encontrado no Chatwoot" }, { status: 404 });
     }
