@@ -40,6 +40,18 @@ export default function BoardKanbanPage() {
 
   useEffect(() => {
     fetchBoard();
+
+    const interval = setInterval(fetchBoard, 30000);
+
+    const handleVisibility = () => {
+      if (document.visibilityState === "visible") fetchBoard();
+    };
+    document.addEventListener("visibilitychange", handleVisibility);
+
+    return () => {
+      clearInterval(interval);
+      document.removeEventListener("visibilitychange", handleVisibility);
+    };
   }, [fetchBoard]);
 
   if (loading) {
