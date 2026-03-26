@@ -35,11 +35,11 @@ export function KanbanCard({ lead, columnId }: KanbanCardProps) {
     opacity: isDragging ? 0.5 : 1,
   };
 
-  const digits = lead.whatsapp.replace(/\D/g, "");
+  const digits = (lead.whatsapp || "").replace(/\D/g, "");
   const isBrazil = digits.startsWith("55") && (digits.length === 12 || digits.length === 13);
   const formattedPhone = isBrazil
     ? `(${digits.slice(2, 4)}) ${digits.slice(4, digits.length - 4)}-${digits.slice(-4)}`
-    : lead.whatsapp;
+    : lead.whatsapp || "Sem telefone";
 
   const openChatwoot = async (e: React.MouseEvent) => {
     e.stopPropagation();
