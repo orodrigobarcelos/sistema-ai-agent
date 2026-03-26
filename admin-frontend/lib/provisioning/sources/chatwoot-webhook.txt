@@ -121,7 +121,7 @@ Deno.serve(async (req: Request) => {
       const results = [];
       for (const [key, columnName] of kanbanEntries) {
         if (!columnName || typeof columnName !== "string" || columnName.trim() === "") continue;
-        const boardName = key.replace("kanban_", "").replace(/_/g, " ");
+        const boardName = key.replace("kanban_", "");
         const { error: rpcError } = await supabase.rpc("move_lead_to_board_column", { p_lead_id: leadId, p_board_name: boardName, p_column_name: columnName, p_moved_by: "chatwoot" });
         if (rpcError) console.log("[contact_updated] erro:", rpcError.message);
         results.push({ board: boardName, column: columnName, success: !rpcError });
