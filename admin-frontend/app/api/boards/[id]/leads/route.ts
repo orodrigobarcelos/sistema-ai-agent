@@ -38,7 +38,7 @@ export async function GET(
   const columnsWithLeads = columns.map((col) => {
     const colPositions = (positions || []).filter((p) => p.column_id === col.id);
     const leads = colPositions
-      .filter((p) => p.lead)
+      .filter((p) => p.lead && p.lead.whatsapp)
       .map((p) => ({
         id: p.lead.id,
         name: p.lead.name || p.lead.full_name || "",
