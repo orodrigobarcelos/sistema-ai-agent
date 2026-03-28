@@ -52,11 +52,12 @@ serve(async (req) => {
   console.log(`[instagram-profile] Fetching profile for: ${username}`);
 
   try {
-    const headers: Record<string, string> = { "X-RapidAPI-Key": rapidApiKey, "X-RapidAPI-Host": "instagram-looter2.p.rapidapi.com" };
-    const rapidApiUrl = `https://instagram-looter2.p.rapidapi.com/profile2?username=${username}`;
-    console.log(`[instagram-profile] Calling RapidAPI: ${rapidApiUrl}`);
+    const formData = new URLSearchParams();
+    formData.append("username_or_url", username);
+    formData.append("data", "basic");
+    console.log(`[instagram-profile] Calling Instagram Scraper Stable API for: ${username}`);
 
-    const apiResp = await fetch(rapidApiUrl, { headers, signal: AbortSignal.timeout(20000) });
+    const apiResp = await fetch("https://instagram-scraper-stable-api.p.rapidapi.com/ig_get_fb_profile.php", { method: "POST", headers: { "X-RapidAPI-Key": rapidApiKey, "X-RapidAPI-Host": "instagram-scraper-stable-api.p.rapidapi.com", "Content-Type": "application/x-www-form-urlencoded" }, body: formData.toString(), signal: AbortSignal.timeout(20000) });
     console.log(`[instagram-profile] RapidAPI response status: ${apiResp.status}`);
 
     if (!apiResp.ok) {
@@ -68,7 +69,7 @@ serve(async (req) => {
     const raw = await apiResp.json();
     const user = raw ?? {};
 
-    if (user.status === false || user.errorMessage?.toLowerCase().includes("not exist") || user.errorMessage?.toLowerCase().includes("not found")) {
+    if (user.error || user.status === false || user.errorMessage?.toLowerCase().includes("not exist") || user.errorMessage?.toLowerCase().includes("not found")) {
       console.log(`[instagram-profile] Account @${username} does not exist (API response)`);
       return new Response(JSON.stringify({ error: "account_not_found", message: "Esta conta nao existe" }), { status: 404, headers: { "Content-Type": "application/json", ...corsHeaders } });
     }
