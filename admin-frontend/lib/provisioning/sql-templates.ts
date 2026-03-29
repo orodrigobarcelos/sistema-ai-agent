@@ -181,7 +181,7 @@ BEGIN
 END;
 $function$;
 
-CREATE OR REPLACE FUNCTION public.get_leads_pending_followup(p_kanban_nome text, p_espera_respondeu integer DEFAULT 6, p_espera_nao_respondeu integer DEFAULT 24, p_expira_tentativa integer DEFAULT 72)
+CREATE OR REPLACE FUNCTION public.get_leads_pending_followup(p_kanban_nome text, p_espera_respondeu integer DEFAULT 6, p_espera_nao_respondeu integer DEFAULT 24, p_expira_tentativa integer DEFAULT 72, p_max_followups integer DEFAULT 4)
  RETURNS json LANGUAGE plpgsql SECURITY DEFINER
 AS $function$
 DECLARE
@@ -209,7 +209,7 @@ BEGIN
   ),
   lead_status AS (
     SELECT bl.*,
-      (SELECT min(n) FROM generate_series(1, 4) AS n
+      (SELECT min(n) FROM generate_series(1, p_max_followups) AS n
        WHERE NOT bl.completed_followups @> ('[' || n || ']')::jsonb
        AND (NOT bl.followup_attempts ? n::text
             OR (bl.followup_attempts ->> n::text)::timestamptz > NOW() - (p_expira_tentativa || ' hours')::INTERVAL)
